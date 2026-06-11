@@ -2,16 +2,12 @@
 """VCF Compliance Inspector — forensic review of VMware VCF 9+ .data registration files.
 
 Safely inspect JWT-encoded VCF mandatory compliance artifacts (Registration-*.data)
-before uploading in disconnected / air-gapped environments. Provides dual-view analysis
-(raw hex + decoded JWT), xr2 fingerprint inspection, and sensitive-data scanning.
+before uploading in disconnected / air-gapped environments.
 
-The tool always performs deep analysis on raw binary data, even when JWT decoding fails.
-This helps detect potential steganography, appended data, high-entropy blobs, or layered encoding.
-
-Usage examples::
-
-    python vcf_compliance_inspector.py Registration-*.data
-    python vcf_compliance_inspector.py /path/to/compliance/ --dir --json audit-report.json
+Key behaviors:
+- Always performs deep binary analysis on raw data (even on JWT decode failure).
+- Automatically expands steganography/entropy search when JWT decoding fails.
+- Detects appended data, high-entropy blobs, magic bytes, and multi-layer encoding.
 
 References:
     - https://blogs.vmware.com/cloud-foundation/2025/06/24/licensing-in-vmware-cloud-foundation-9-0/
@@ -62,9 +58,8 @@ RISK_ASSESSMENT_PATH = Path(__file__).resolve().parent / "RISK_ASSESSMENT.md"
 
 SECURITY_LIMITATIONS = (
     "This tool performs local, read-only inspection of raw binary data and decoded claims. "
-    "It does not verify JWT signatures by default, prove that opaque fields cannot be correlated, "
-    "or certify legal adequacy of upload. A clean verdict means no obvious sensitive patterns, "
-    "high-entropy anomalies, or steganographic indicators were found in the analyzed data."
+    "It does not verify JWT signatures by default. A clean verdict means no obvious sensitive patterns, "
+    "high-entropy anomalies, or steganographic indicators were found."
 )
 
 EXPECTED_VCF_CLAIMS = frozenset({
@@ -84,7 +79,7 @@ SENSITIVE_KEYWORDS = (
     "aws_secret", "client_secret",
 )
 
-SENSITIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+SENSITIVE_PATTERNS = [
     ("email", re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")),
     ("ipv4", re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b")),
     ("ipv6", re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b|\b::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}\b|\b(?:[0-9a-fA-F]{1,4}:){1,6}:\b")),
@@ -93,21 +88,19 @@ SENSITIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("high_entropy_base64", re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{48,}={0,2}(?![A-Za-z0-9+/=])" )),
 ]
 
-# Common file magic bytes for steganography / appended data detection
 MAGIC_BYTES = {
     b"PK\x03\x04": "ZIP archive",
     b"\x89PNG": "PNG image",
     b"%PDF": "PDF document",
     b"MZ": "PE/EXE executable",
     b"\x1f\x8b": "Gzip compressed",
-    b"\x50\x4b\x05\x06": "ZIP (empty archive)",
     b"Rar!": "RAR archive",
 }
 
 BYTES_PER_HEX_LINE = 16
 JWT_PATTERN = re.compile(r"([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)")
 
-COMPLIANCE_ANALYZERS: dict[str, str] = {"registration_data": "analyze_vcf_data_file"}
+COMPLIANCE_ANALYZERS = {"registration_data": "analyze_vcf_data_file"}
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +194,7 @@ def extract_potential_jwt(text: str) -> tuple[str, str, str] | None:
 
 
 def calculate_entropy(data: bytes) -> float:
-    """Calculate Shannon entropy of bytes (0.0 = low randomness, 8.0 = high randomness)."""
+    """Shannon entropy (0.0 = predictable, 8.0 = completely random)."""
     if not data:
         return 0.0
     freq = {}
@@ -215,11 +208,15 @@ def calculate_entropy(data: bytes) -> float:
     return entropy
 
 
-def detect_steganography_indicators(data: bytes, jwt_token: str | None = None) -> list[str]:
-    """Detect potential steganography, appended data, or layered encoding in raw bytes."""
+def detect_steganography_indicators(
+    data: bytes,
+    jwt_token: str | None = None,
+    aggressive: bool = False,
+) -> list[str]:
+    """Detect steganography, appended data, high-entropy blobs, and layered encoding."""
     indicators: list[str] = []
 
-    # 1. Appended data after a valid JWT
+    # Appended data after JWT
     if jwt_token:
         token_end = data.find(jwt_token.encode())
         if token_end != -1:
@@ -227,21 +224,22 @@ def detect_steganography_indicators(data: bytes, jwt_token: str | None = None) -
             if after.strip():
                 indicators.append(f"Data appended after JWT ({len(after)} bytes) - possible steganography")
 
-    # 2. High entropy regions (possible encrypted/compressed hidden data)
-    if len(data) > 64:
+    # Entropy analysis (more sensitive in aggressive mode)
+    if len(data) > 32:
         entropy = calculate_entropy(data)
-        if entropy > 7.5:
-            indicators.append(f"Very high entropy ({entropy:.2f}/8.0) across file - possible encrypted or compressed payload")
+        threshold = 7.2 if aggressive else 7.6
+        if entropy > threshold:
+            indicators.append(f"High entropy ({entropy:.2f}/8.0) - possible encrypted/compressed hidden data")
 
-    # 3. Magic bytes of known file formats embedded in the data
+    # Magic bytes
     for magic, desc in MAGIC_BYTES.items():
         if magic in data:
-            indicators.append(f"Embedded {desc} magic bytes detected - possible hidden file")
+            indicators.append(f"Embedded {desc} magic bytes detected")
 
-    # 4. Multiple layers of base64 (common stego technique)
+    # Multi-layer base64 (common stego technique)
     try:
         decoded_once = base64.b64decode(data, validate=False)
-        if len(decoded_once) > 16:
+        if len(decoded_once) > 20:
             try:
                 decoded_twice = base64.b64decode(decoded_once, validate=False)
                 if len(decoded_twice) > 8:
@@ -251,10 +249,10 @@ def detect_steganography_indicators(data: bytes, jwt_token: str | None = None) -
     except Exception:
         pass
 
-    # 5. Unusual control characters or null bytes in text areas
+    # Null bytes (suspicious in text-heavy JWT areas)
     null_count = data.count(b"\x00")
-    if null_count > 4:
-        indicators.append(f"Unusual number of null bytes ({null_count}) - possible binary data in text field")
+    if null_count > (3 if aggressive else 6):
+        indicators.append(f"Unusual number of null bytes ({null_count}) - possible binary data hidden in text")
 
     return indicators
 
@@ -362,7 +360,7 @@ def verify_jwt_signature(analysis: FileAnalysis, public_key_pem: str | None = No
 
     if public_key_pem is None:
         analysis.jwt_verified = None
-        analysis.jwt_verify_error = f"Signature verification skipped (no public key provided). alg={alg}. This is expected for air-gapped review."
+        analysis.jwt_verify_error = f"Signature verification skipped (no public key provided). alg={alg}. Expected for air-gapped review."
         return
 
     if not HAS_PYJWT:
@@ -371,7 +369,7 @@ def verify_jwt_signature(analysis: FileAnalysis, public_key_pem: str | None = No
         return
 
     analysis.jwt_verified = None
-    analysis.jwt_verify_error = f"Full cryptographic verification requires storing original base64 segments (future enhancement). alg={alg}."
+    analysis.jwt_verify_error = f"Full verification requires storing original base64 segments (future). alg={alg}."
 
 
 def scan_for_sensitive_data(
@@ -380,13 +378,14 @@ def scan_for_sensitive_data(
     jwt_segments: Sequence[str] | None = None,
     exclude_values: Sequence[str] | None = None,
     raw_bytes: bytes | None = None,
+    aggressive: bool = False,
 ) -> list[SensitiveFinding]:
     findings: list[SensitiveFinding] = []
     seen: set[tuple[str, str]] = set()
     jwt_blob = ".".join(jwt_segments) if jwt_segments else ""
     opaque_literals = [v for v in (exclude_values or []) if v]
 
-    # Text-based scanning
+    # Text scanning
     for source in texts:
         if not source:
             continue
@@ -413,11 +412,11 @@ def scan_for_sensitive_data(
                 seen.add(key)
                 findings.append(SensitiveFinding(category=label, match=matched, context=_context_snippet(source, match.start(), match.end())))
 
-    # Binary / steganography analysis (always run on raw data)
+    # Binary / steganography analysis (always performed)
     if raw_bytes:
-        stego_findings = detect_steganography_indicators(raw_bytes, jwt_token=jwt_blob if jwt_blob else None)
-        for indicator in stego_findings:
-            findings.append(SensitiveFinding(category="steganography", match=indicator[:80], context="Raw binary analysis"))
+        stego = detect_steganography_indicators(raw_bytes, jwt_token=jwt_blob or None, aggressive=aggressive)
+        for indicator in stego:
+            findings.append(SensitiveFinding(category="steganography", match=indicator[:90], context="Raw binary analysis"))
 
     return findings
 
@@ -442,7 +441,7 @@ def _assess_verdict(analysis: FileAnalysis, *, sensitive_findings: list[Sensitiv
 
     if sensitive_findings:
         cats = sorted({f.category for f in sensitive_findings})
-        return "review_recommended", f"Sensitive / steganography indicators: {', '.join(cats)}."
+        return "review_recommended", f"Sensitive/steganography indicators detected: {', '.join(cats)}."
 
     payload = analysis.jwt_payload or {}
     missing = sorted(EXPECTED_VCF_CLAIMS - set(payload.keys()))
@@ -457,12 +456,17 @@ def _assess_verdict(analysis: FileAnalysis, *, sensitive_findings: list[Sensitiv
         return "review_recommended", f"Unexpected asset_type '{asset_type}' (expected 'AC')."
 
     if analysis.stego_indicators:
-        return "review_recommended", "Steganographic or high-entropy indicators detected in raw data."
+        return "review_recommended", "Steganographic or high-entropy indicators found in raw binary data."
 
     return "clean", "Structure matches expected VCF 9 registration JWT; no obvious sensitive data or steganography detected."
 
 
-def analyze_vcf_data_file(path: Path, *, head: int | None = None, public_key_pem: str | None = None) -> FileAnalysis:
+def analyze_vcf_data_file(
+    path: Path,
+    *,
+    head: int | None = None,
+    public_key_pem: str | None = None,
+) -> FileAnalysis:
     data = path.read_bytes()
     sha = compute_sha256(data)
     hexdump_str, truncated = pretty_hexdump(data, head=head, colorize=False)
@@ -508,7 +512,9 @@ def analyze_vcf_data_file(path: Path, *, head: int | None = None, public_key_pem
 
         verify_jwt_signature(analysis, public_key_pem=public_key_pem)
 
-    # Always run sensitive + steganography scan on raw data
+    # Determine if we should be aggressive (decode failure triggers expanded search)
+    aggressive_mode = bool(analysis.jwt_errors) or not analysis.is_jwt
+
     scan_texts: list[str] = [analysis.raw_text_preview]
     if analysis.jwt_header:
         scan_texts.append(json.dumps(analysis.jwt_header))
@@ -525,10 +531,10 @@ def analyze_vcf_data_file(path: Path, *, head: int | None = None, public_key_pem
         scan_texts,
         jwt_segments=jwt_segments,
         exclude_values=exclude_values,
-        raw_bytes=data,   # Always pass raw bytes for stego/binary analysis
+        raw_bytes=data,
+        aggressive=aggressive_mode,
     )
 
-    # Collect stego indicators separately for verdict
     analysis.stego_indicators = [f.match for f in analysis.sensitive_findings if f.category == "steganography"]
 
     verdict, reason = _assess_verdict(analysis, sensitive_findings=analysis.sensitive_findings)
@@ -543,7 +549,7 @@ def analyze_license_usage_file(path: Path, *, head: int | None = None) -> FileAn
 
 
 # ---------------------------------------------------------------------------
-# Rendering (unchanged from polished v1.2.0)
+# Rendering
 # ---------------------------------------------------------------------------
 
 
@@ -595,7 +601,7 @@ def render_analysis(analysis: FileAnalysis, console: Console, *, verbose: bool =
 
         for key, value in payload_for_display.items():
             if key == "xr2":
-                display_val = f"[bold magenta]{value}[/bold magenta]\n[dim]→ see xr2 fingerprint analysis (section 5)[/dim]"
+                display_val = f"[bold magenta]{value}[/bold magenta]\n[dim]→ see xr2 analysis (section 5)[/dim]"
             elif key in EXPECTED_VCF_CLAIMS:
                 display_val = json.dumps(value) if not isinstance(value, str) else value
                 display_val = f"[white]{display_val}[/white]"
@@ -646,7 +652,7 @@ def render_analysis(analysis: FileAnalysis, console: Console, *, verbose: bool =
             scan_table.add_row(finding.category, finding.match, finding.context)
         console.print(scan_table)
     else:
-        console.print(Panel("[bold green]✓ No obvious proprietary or sensitive data detected[/bold green]\n[dim]Keyword and pattern scan + binary steganography analysis performed on raw data.[/dim]", border_style="green", padding=(0, 2)))
+        console.print(Panel("[bold green]✓ No obvious proprietary or sensitive data detected[/bold green]\n[dim]Binary steganography + entropy analysis performed on raw data (aggressive mode triggered on decode failure).[/dim]", border_style="green", padding=(0, 2)))
 
     _section(console, 7, "Assurance Boundary", "bold bright_black")
     risk_note = SECURITY_LIMITATIONS
@@ -662,7 +668,7 @@ def render_analysis(analysis: FileAnalysis, console: Console, *, verbose: bool =
     if analysis.expected_claims_missing:
         summary_lines.extend(["", f"[dim]Expected claims missing:[/dim] [yellow]{', '.join(analysis.expected_claims_missing)}[/yellow]"])
     if analysis.stego_indicators:
-        summary_lines.extend(["", f"[yellow]Steganography / high-entropy indicators found in raw binary data.[/yellow]"])
+        summary_lines.extend(["", f"[yellow]Steganography/high-entropy indicators found in raw binary.[/yellow]"])
     console.print(Panel("\n".join(summary_lines), border_style=color, padding=(1, 2)))
 
     _section(console, 9, "Raw Hex & ASCII (byte-level review)", "bold bright_blue")
@@ -701,17 +707,17 @@ def collect_files(paths: Sequence[str], *, file_flag: bool, dir_flag: bool) -> l
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vcf_compliance_inspector",
-        description="Forensic inspector for VMware VCF 9+ Registration .data files (JWT-encoded compliance artifacts). Always analyzes raw binary for steganography.",
+        description="Forensic inspector for VCF 9+ .data files. Automatically expands binary analysis on JWT decode failure.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("paths", nargs="*", help=".data file paths, globs, or directories (with --dir).")
-    parser.add_argument("--file", action="append", dest="files", default=[], metavar="PATH", help="Explicit file path (repeatable).")
-    parser.add_argument("--dir", action="store_true", help="Glob *.data inside directories.")
-    parser.add_argument("--json", metavar="PATH", nargs="?", const="-", help="Write JSON audit report.")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Show full payload JSON etc.")
-    parser.add_argument("--no-color", action="store_true", help="Disable colored output.")
-    parser.add_argument("--head", type=int, metavar="BYTES", help="Limit hexdump to first N bytes.")
-    parser.add_argument("--public-key", metavar="PEM_FILE", help="Optional PEM public key for signature verification (advanced).")
+    parser.add_argument("paths", nargs="*", help=".data paths, globs, or directories.")
+    parser.add_argument("--file", action="append", dest="files", default=[], metavar="PATH", help="Explicit file.")
+    parser.add_argument("--dir", action="store_true", help="Treat paths as directories.")
+    parser.add_argument("--json", metavar="PATH", nargs="?", const="-", help="JSON audit report.")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show full payload.")
+    parser.add_argument("--no-color", action="store_true", help="Disable color.")
+    parser.add_argument("--head", type=int, metavar="BYTES", help="Limit hexdump.")
+    parser.add_argument("--public-key", metavar="PEM_FILE", help="PEM key for signature verification.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     return parser
 
@@ -758,7 +764,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         clean_count = sum(1 for r in results if r.verdict == "clean")
         review_count = len(results) - clean_count
         console.print()
-        console.print(Panel(f"[bold]Batch complete:[/bold] {len(results)} files  |  [green]{clean_count} clean[/green]  |  [yellow]{review_count} need review[/yellow]", border_style="bright_cyan", padding=(0, 2)))
+        console.print(Panel(f"[bold]Batch complete:[/bold] {len(results)} files | [green]{clean_count} clean[/green] | [yellow]{review_count} need review[/yellow]", border_style="bright_cyan", padding=(0, 2)))
 
     if args.json:
         report = {"tool": "vcf_compliance_inspector", "version": VERSION, "files": [analysis_to_dict(a) for a in results]}
@@ -767,7 +773,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json_text)
         else:
             Path(args.json).write_text(json_text, encoding="utf-8")
-            console.print(f"[green]JSON audit report written to {args.json}[/green]")
+            console.print(f"[green]JSON report written to {args.json}[/green]")
 
     return exit_code
 
