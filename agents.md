@@ -1,64 +1,32 @@
 # VCF9-Disconnected-data-FileViewer — Agent Operating Guide
 
 ## Project Mission
-Forensic, read-only CLI tool for inspecting VMware VCF 9+ Registration `*.data` JWT files before upload in disconnected/air-gapped environments. Primary goals: dual-view visibility (decoded claims + raw hex), `xr2` transparency, sensitive-data scanning, and explicit assurance boundaries. Supports trust-but-verify workflows for compliance teams (especially DoD/aerospace).
+Forensic, read-only CLI tool for inspecting VMware VCF 9+ Registration `*.data` JWT files before upload in disconnected/air-gapped environments. Primary goals: dual-view visibility (decoded claims + raw hex), `xr2` transparency, sensitive-data scanning, **and automatic expanded binary/steganography analysis when JWT decoding fails**.
 
-## Core Architecture
-- **Entry**: `main()` → `collect_files()` → `analyze_vcf_data_file()` per file → `render_analysis()` or JSON export.
-- **Data Model**: `FileAnalysis` dataclass + nested `Xr2Analysis` and `SensitiveFinding`.
-- **Decoding**: Manual base64url (`b64url_decode` + padding) + `json.loads`. No signature verification (intentional).
-- **Scanning**: Keyword list + regex patterns with smart exclusions (JWT blob itself and `xr2` value excluded from high-entropy matching).
-- **Rendering**: Rich panels/tables/syntax. Always ends with raw hexdump (section 9). Graceful plain-text fallback.
-- **Extensibility**: `COMPLIANCE_ANALYZERS` registry + placeholder `analyze_license_usage_file()`.
-- **Safety**: Never writes input files, no network, SHA-256 for auditability.
+## Core Architecture Updates (v1.2.1)
+- `detect_steganography_indicators()` + `calculate_entropy()` added.
+- `scan_for_sensitive_data()` now always receives `raw_bytes` and an `aggressive` flag.
+- When `jwt_errors` exist or the file is not a valid JWT, **aggressive mode is automatically enabled** (lower entropy threshold, more sensitive null-byte detection).
+- Steganography findings are categorized separately and influence the final verdict.
 
-## Key Design Decisions & Trade-offs
-- Manual JWT decode chosen to avoid external crypto deps and key management in air-gapped contexts.
-- `rich` is the only optional dependency (graceful fallback exists via `no_color`).
-- Verdict logic combines structural checks (expected claims, asset_type=="AC") + sensitive findings. "Clean" is strong but not absolute.
-- Hexdump is always last so analysts finish with byte-level truth.
-- `xr2` is decoded when possible but always accompanied by the official Broadcom explanation that it is an opaque fingerprint.
+## Key Design Decisions
+- We **always** analyze the raw binary, even on complete decode failure. This is the correct behavior for a forensic tool.
+- Aggressive mode is triggered automatically on decode problems rather than requiring a separate flag (keeps CLI simple while maximizing detection power).
+- Entropy, magic bytes, appended data, and multi-layer base64 are the primary steganography signals implemented.
 
-## How to Extend
-- **New artifact types** (License Usage File, confirmation files): Implement analyzer function and register in `COMPLIANCE_ANALYZERS`. Wire dispatch in `main()`.
-- **Stronger validation**: Add optional jsonschema or stricter dataclass validation behind a flag.
-- **TUI**: Textual-based interactive mode for exploring batches.
-- **Scanner tuning**: Adjust `SENSITIVE_KEYWORDS` / `SENSITIVE_PATTERNS` or add entropy thresholds. Update tests.
-- **Synthetic test data**: Expand `samples/` with new scenarios (malformed xr2, unexpected claims, etc.).
+## Extension Points
+- Improve `detect_steganography_indicators()` with more sophisticated steganalysis (e.g., statistical tests, machine learning).
+- Add a `--aggressive` CLI flag to force expanded search even on clean JWTs.
+- Store original base64 segments in `FileAnalysis` to enable real cryptographic signature verification when a public key is supplied.
 
-## Testing Expectations
-- At minimum: pytest covering `b64url_decode`, `decode_jwt_part`, `scan_for_sensitive_data`, `_assess_verdict`, and `decode_xr2`.
-- Use the existing synthetic samples in `samples/`.
-- For real customer `.data` files: never commit them; test locally only.
-- Golden output tests for terminal rendering are valuable but secondary.
+## Testing
+- New tests cover entropy calculation, steganography detection (appended data, magic bytes, multi-layer base64), and the automatic aggressive mode trigger on decode failure.
 
-## Security Model (Non-Negotiable)
-- Read-only forensic inspection only.
-- Explicit "Assurance Boundary" panel on every run (links to RISK_ASSESSMENT.md).
-- Scanner is a heuristic triage tool, not a formal proof of absence of secrets.
-- Never claim the tool verifies Broadcom-side opacity of `xr2` or performs signature validation.
+## Security Model
+The tool now provides stronger defense-in-depth by treating every file as potentially containing hidden data in its raw binary form, not just in the decoded JWT claims.
 
-## Documentation Standards
-- Keep `README.md` user-focused with examples and output samples.
-- Keep `RISK_ASSESSMENT.md` as the authoritative source for residual risks, limitations, and operator recommendations.
-- Update `agents.md` whenever architecture or extension points change.
-- Code must have clear docstrings; complex functions should have usage examples in the module docstring.
+## Current Roadmap
+- v1.2.1: Automatic aggressive steganography/entropy analysis on decode failure (current)
+- Future: Stronger steganalysis, optional real signature verification, TUI mode
 
-## Common Pitfalls to Avoid
-- Overly aggressive JWT detection that assumes clean single-line content.
-- Forgetting to exclude JWT segments / `xr2` from high-entropy scanning → noisy false positives.
-- Making the tool write files or perform network operations.
-- Weakening the "hexdump always last" principle.
-- Treating a "clean" verdict as sufficient for high-assurance/classified programs without human review.
-
-## Current Roadmap Snapshot (update after sessions)
-- v1.1.0: Core registration file support + excellent docs (current)
-- Next: Robust JWT extraction, batch summary, License Usage File hook wiring, tests/, agents.md
-- Future: Stronger schema validation, TUI mode, tighter integration with user’s other tooling (Sentinel-style)
-
-## References (keep current)
-- VMware VCF 9.0 Licensing blog & Broadcom TechDocs (disconnected registration & usage files)
-- RISK_ASSESSMENT.md in this repo
-- Original prompt used to generate v1.x
-
-This project prioritizes **pragmatic defense-in-depth** over perfect guarantees. Every change should preserve that character.
+Keep this document updated after every significant change.
