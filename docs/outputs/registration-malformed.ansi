@@ -1,0 +1,84 @@
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  [1mVCF Compliance Inspector[0m  [2mv1.1.0[0m                                            │
+│  Registration-malformed-2025-06-24T12_00_00Z.data                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[2m───────────────────────────── [0m[1m1[0m[1m. File Information[0m[2m ──────────────────────────────[0m
+╭──────────────┬───────────────────────────────────────────────────────────────╮
+│[1m [0m[1mPath        [0m[1m [0m│ /workspace/samples/Registration-malformed-2025-06-24T12_00_0… │
+│[1m [0m[1mSize        [0m[1m [0m│ 78 bytes                                                      │
+│[1m [0m[1mSHA-256     [0m[1m [0m│ 271e36a0b5b53946b2f5b89020f605221460c55f37238d59221dc442add1… │
+│[1m [0m[1mJWT         [0m[1m [0m│ Yes                                                           │
+╰──────────────┴───────────────────────────────────────────────────────────────╯
+
+[2m─────────────────────────────── [0m[1m2[0m[1m. JWT Structure[0m[2m ───────────────────────────────[0m
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  [1m✓ Valid JWT layout detected[0m                                                 │
+│  [2mThree dot-separated segments: [0mheader[2m.[0mpayload[2m.[0msignature                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[2m────────────────────────────── [0m[1m3[0m[1m. Decoded Header[0m[2m ───────────────────────────────[0m
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ {                                                                            │
+│   "alg": "none",                                                             │
+│   "typ": "JWT"                                                               │
+│ }                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+╭──────────────────────────── [1mJWT Decode Warnings[0m ─────────────────────────────╮
+│  • payload: JWT part is not valid UTF-8: 'utf-8' codec can't decode byte     │
+│  0x9e in position 0: invalid start byte                                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[2m───────────────────────── [0m[1m5[0m[1m. xr2 Fingerprint Analysis[0m[2m ──────────────────────────[0m
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  [2;3mOpaque fingerprint used to link usage data; no identifiable environment [0m    │
+│  [2;3mdetails can be derived (per Broadcom / VMware VCF 9 documentation).[0m         │
+│                                                                              │
+│  [2mxr2 claim not present in payload.[0m                                           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[2m──────────────────────────── [0m[1m6[0m[1m. Sensitive Data Scan[0m[2m ────────────────────────────[0m
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  [1m✓ No obvious proprietary or sensitive data detected[0m                         │
+│  [2mKeyword and pattern scan over decoded JWT content and raw text.[0m             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[2m──────────────────────────── [0m[1m7[0m[1m. Assurance Boundary[0m[2m ─────────────────────────────[0m
+╭────────────────────── [2mWhat this tool cannot guarantee[0m ───────────────────────╮
+│  This tool performs local, read-only inspection. It does not verify JWT      │
+│  signatures, prove that opaque fields (xr2, UUIDs) cannot be correlated by   │
+│  Broadcom, or certify legal adequacy of upload. A clean verdict means no     │
+│  obvious sensitive patterns were found in decoded content—not zero residual  │
+│  risk. See RISK_ASSESSMENT.md.                                               │
+│                                                                              │
+│  ]8;id=676201;file:///workspace/RISK_ASSESSMENT.md\Full risk assessment: RISK_ASSESSMENT.md]8;;\                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[2m───────────────────────────── [0m[1m8[0m[1m. Summary & Verdict[0m[2m ─────────────────────────────[0m
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│  [1m⚠  REVIEW RECOMMENDED[0m                                                       │
+│                                                                              │
+│  JWT decode issues: payload: JWT part is not valid UTF-8: 'utf-8' codec      │
+│  can't decode byte 0x9e in position 0: invalid start byte                    │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[2m──────────────────── [0m[1m9[0m[1m. Raw Hex & ASCII [0m[1m([0m[1mbyte-level review[0m[1m)[0m[2m ────────────────────[0m
+╭──────────────────────────── [1mRaw Hex & ASCII Dump[0m ────────────────────────────╮
+│                                                                              │
+│  00000000  65 79 4a 68 62 47 63 69 4f 69 41 69 62 6d 39 75                   │
+│  |eyJhbGciOiAibm9u|                                                          │
+│  00000010  5a 53 49 73 49 43 4a 30 65 58 41 69 4f 69 41 69                   │
+│  |ZSIsICJ0eXAiOiAi|                                                          │
+│  00000020  53 6c 64 55 49 6e 30 2e 21 21 21 6e 6f 74 2d 76                   │
+│  |SldUIn0.!!!not-v|                                                          │
+│  00000030  61 6c 69 64 2d 62 61 73 65 36 34 75 72 6c 2d 70                   │
+│  |alid-base64url-p|                                                          │
+│  00000040  61 79 6c 6f 61 64 21 21 21 2e 63 32 6c 6e                         │
+│  |ayload!!!.c2ln|                                                            │
+│                                                                              │
+╰─────────────── [2m78 total bytes[0m  ·  [2mSHA-256:[0m 271e36a0b5b53946… ────────────────╯
+
