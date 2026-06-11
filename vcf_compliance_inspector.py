@@ -38,11 +38,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 RISK_ASSESSMENT_PATH = Path(__file__).resolve().parent / "RISK_ASSESSMENT.md"
 
@@ -123,6 +124,11 @@ SENSITIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 BYTES_PER_HEX_LINE = 16
+
+# Regex for robust JWT extraction (three base64url segments separated by dots)
+JWT_PATTERN = re.compile(
+    r"([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)"
+)
 
 # Registry for future compliance artifact analyzers (License Usage File, etc.).
 COMPLIANCE_ANALYZERS: dict[str, str] = {
@@ -236,6 +242,23 @@ def decode_jwt_part(segment: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("JWT part JSON root must be an object")
     return parsed
+
+
+def extract_potential_jwt(text: str) -> tuple[str, str, str] | None:
+    """Robustly extract a three-segment JWT from text using regex.
+
+    Handles extra whitespace, newlines, or surrounding content.
+    Returns the three segments (header, payload, signature) or None.
+    """
+    text = text.strip()
+    match = JWT_PATTERN.search(text)
+    if not match:
+        return None
+    token = match.group(1)
+    parts = token.split(".")
+    if len(parts) == 3 and all(parts):
+        return parts[0], parts[1], parts[2]
+    return None
 
 
 def pretty_hexdump(
@@ -553,21 +576,23 @@ def analyze_vcf_data_file(
     except UnicodeDecodeError:
         analysis.raw_text_preview = data[:512].decode("utf-8", errors="replace")
 
-    parts = analysis.raw_text_preview.strip().split(".")
+    # Robust JWT extraction (handles whitespace/newlines/surrounding content)
+    jwt_parts = extract_potential_jwt(analysis.raw_text_preview)
     jwt_segments: list[str] | None = None
 
-    if len(parts) == 3 and all(parts):
+    if jwt_parts:
         analysis.is_jwt = True
-        jwt_segments = parts
-        analysis.jwt_signature_b64 = parts[2]
+        header_b64, payload_b64, sig_b64 = jwt_parts
+        analysis.jwt_signature_b64 = sig_b64
+        jwt_segments = [header_b64, payload_b64, sig_b64]
 
         try:
-            analysis.jwt_header = decode_jwt_part(parts[0])
+            analysis.jwt_header = decode_jwt_part(header_b64)
         except ValueError as exc:
             analysis.jwt_errors.append(f"header: {exc}")
 
         try:
-            analysis.jwt_payload = decode_jwt_part(parts[1])
+            analysis.jwt_payload = decode_jwt_part(payload_b64)
         except ValueError as exc:
             analysis.jwt_errors.append(f"payload: {exc}")
 
@@ -689,7 +714,7 @@ def render_analysis(
             Panel(
                 "[bold yellow]⚠ No JWT structure[/bold yellow]\n"
                 "[dim]Expected format: [/dim][cyan]header[/cyan][dim].[/dim]"
-                "[cyan]payload[/cyan][dim].[/dim][cyan]signature[/cyan]\n"
+                "[cyan]payload[/cyan][dim].[/dim][cyan]signature[/cyan]"
                 "[dim]Decoded claims unavailable — review raw hex dump at end of report.[/dim]",
                 border_style="yellow",
                 padding=(0, 2),
@@ -1047,6 +1072,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         except OSError as exc:
             console.print(f"[red]Error reading {file_path}: {exc}[/red]")
             exit_code = 2
+
+    # Batch summary for multiple files
+    if len(files) > 1:
+        clean_count = sum(1 for r in results if r.verdict == "clean")
+        review_count = len(results) - clean_count
+        console.print()
+        summary_panel = Panel(
+            f"[bold]Batch complete:[/bold] {len(results)} files processed  |  "
+            f"[green]{clean_count} clean[/green]  |  "
+            f"[yellow]{review_count} need review[/yellow]",
+            border_style="bright_cyan",
+            padding=(0, 2),
+        )
+        console.print(summary_panel)
 
     if args.json:
         report = {
