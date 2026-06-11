@@ -42,7 +42,16 @@ from rich.table import Table
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+
+RISK_ASSESSMENT_PATH = Path(__file__).resolve().parent / "RISK_ASSESSMENT.md"
+
+SECURITY_LIMITATIONS = (
+    "This tool performs local, read-only inspection. It does not verify JWT signatures, "
+    "prove that opaque fields (xr2, UUIDs) cannot be correlated by Broadcom, or certify "
+    "legal adequacy of upload. A clean verdict means no obvious sensitive patterns were "
+    "found in decoded content—not zero residual risk. See RISK_ASSESSMENT.md."
+)
 
 EXPECTED_VCF_CLAIMS = frozenset(
     {
@@ -249,25 +258,95 @@ def pretty_hexdump(
     view = data[:head] if head is not None else data
     lines: list[str] = []
 
+    if colorize:
+        lines.append(
+            "[bold white]Offset[/bold white]    "
+            "[bold white]Hex[/bold white]                                              "
+            "[bold white]ASCII[/bold white]"
+        )
+        lines.append("[dim]" + "─" * 76 + "[/dim]")
+
     for offset in range(0, len(view), BYTES_PER_HEX_LINE):
         chunk = view[offset : offset + BYTES_PER_HEX_LINE]
         hex_parts: list[str] = []
         ascii_parts: list[str] = []
 
-        for byte in chunk:
-            hex_parts.append(f"{byte:02x}")
+        for index, byte in enumerate(chunk):
+            if colorize:
+                tone = "bright_blue" if index % 2 == 0 else "blue"
+                hex_parts.append(f"[{tone}]{byte:02x}[/{tone}]")
+            else:
+                hex_parts.append(f"{byte:02x}")
+
             if 32 <= byte <= 126:
                 ch = chr(byte)
-                ascii_parts.append(ch if not colorize else f"[green]{ch}[/green]")
+                if colorize:
+                    ascii_parts.append(f"[bold green]{ch}[/bold green]")
+                else:
+                    ascii_parts.append(ch)
+            elif colorize:
+                ascii_parts.append("[dim red]·[/dim red]")
             else:
-                ascii_parts.append("." if not colorize else "[dim].[/dim]")
+                ascii_parts.append(".")
 
-        hex_col = " ".join(f"{p:>2}" for p in hex_parts).ljust(BYTES_PER_HEX_LINE * 3 - 1)
+        hex_col = " ".join(hex_parts)
+        if len(chunk) < BYTES_PER_HEX_LINE:
+            pad = "   " * (BYTES_PER_HEX_LINE - len(chunk))
+            hex_col = f"{hex_col}{pad}"
+
         ascii_col = "".join(ascii_parts)
-        line = f"{offset:08x}  {hex_col}  |{ascii_col}|"
+        if colorize:
+            line = (
+                f"[bold cyan]{offset:08x}[/bold cyan]  "
+                f"{hex_col}  "
+                f"[dim]│[/dim]{ascii_col}[dim]│[/dim]"
+            )
+        else:
+            hex_plain = " ".join(f"{byte:02x}" for byte in chunk).ljust(BYTES_PER_HEX_LINE * 3 - 1)
+            line = f"{offset:08x}  {hex_plain}  |{ascii_col}|"
         lines.append(line)
 
+    if truncated and colorize:
+        lines.append("")
+        lines.append(
+            f"[yellow]… truncated — {len(data) - len(view):,} additional bytes not shown "
+            f"(use --head to adjust)[/yellow]"
+        )
+    elif truncated:
+        lines.append(f"... truncated — {len(data) - len(view):,} additional bytes not shown")
+
     return "\n".join(lines), truncated
+
+
+def render_raw_hexdump_panel(
+    analysis: FileAnalysis,
+    console: Console,
+) -> None:
+    """Render the raw byte-level hex/ASCII view (always shown last in the report)."""
+    raw_bytes = Path(analysis.path).read_bytes()
+    hexdump_display, trunc = pretty_hexdump(
+        raw_bytes,
+        head=analysis.hexdump_head,
+        colorize=not console.no_color,
+    )
+    title = "[bold white]Raw Hex & ASCII Dump[/bold white]"
+    subtitle_parts = [
+        f"[dim]{analysis.size_bytes:,} total bytes[/dim]",
+        f"[dim]SHA-256:[/dim] [cyan]{analysis.sha256[:16]}…[/cyan]",
+    ]
+    if trunc and analysis.hexdump_head is not None:
+        subtitle_parts.append(
+            f"[yellow]showing first {analysis.hexdump_head:,} bytes[/yellow]"
+        )
+    console.print(
+        Panel(
+            hexdump_display,
+            title=title,
+            subtitle="  ·  ".join(subtitle_parts),
+            border_style="bright_blue",
+            padding=(1, 2),
+        )
+    )
 
 
 def decode_xr2(value: str) -> Xr2Analysis:
@@ -329,6 +408,7 @@ def scan_for_sensitive_data(
     texts: Iterable[str],
     *,
     jwt_segments: Sequence[str] | None = None,
+    exclude_values: Sequence[str] | None = None,
 ) -> list[SensitiveFinding]:
     """Scan decoded text for keywords and regex patterns indicating sensitive data.
 
@@ -336,6 +416,8 @@ def scan_for_sensitive_data(
         texts: Iterable of strings to scan (decoded JWT parts, raw text, etc.).
         jwt_segments: Known JWT dot-separated segments to exclude from high-entropy
             base64 matching (avoids false positives on the token itself).
+        exclude_values: Additional literal strings to exclude from high-entropy
+            matching (e.g. documented opaque claims like ``xr2``).
 
     Returns:
         Deduplicated list of findings.
@@ -343,6 +425,7 @@ def scan_for_sensitive_data(
     findings: list[SensitiveFinding] = []
     seen: set[tuple[str, str]] = set()
     jwt_blob = ".".join(jwt_segments) if jwt_segments else ""
+    opaque_literals = [v for v in (exclude_values or []) if v]
 
     for source in texts:
         if not source:
@@ -366,7 +449,9 @@ def scan_for_sensitive_data(
         for label, pattern in SENSITIVE_PATTERNS:
             for match in pattern.finditer(source):
                 matched = match.group(0)
-                if label == "high_entropy_base64" and matched in jwt_blob:
+                if label == "high_entropy_base64" and (
+                    matched in jwt_blob or matched in opaque_literals
+                ):
                     continue
                 if label == "ipv4" and matched in ("0.0.0.0", "127.0.0.1", "255.255.255.255"):
                     continue
@@ -502,9 +587,16 @@ def analyze_vcf_data_file(
     if analysis.jwt_payload:
         scan_texts.append(json.dumps(analysis.jwt_payload))
 
+    exclude_values: list[str] = []
+    if analysis.jwt_payload:
+        xr2_val = analysis.jwt_payload.get("xr2")
+        if isinstance(xr2_val, str):
+            exclude_values.append(xr2_val)
+
     analysis.sensitive_findings = scan_for_sensitive_data(
         scan_texts,
         jwt_segments=jwt_segments,
+        exclude_values=exclude_values,
     )
 
     verdict, reason = _assess_verdict(analysis, sensitive_findings=analysis.sensitive_findings)
@@ -537,11 +629,17 @@ def analyze_license_usage_file(path: Path, *, head: int | None = None) -> FileAn
 # ---------------------------------------------------------------------------
 
 
-def _verdict_style(verdict: str) -> tuple[str, str]:
-    """Return (title, border/style color) for verdict panel."""
+def _verdict_style(verdict: str) -> tuple[str, str, str]:
+    """Return (title, border color, icon) for verdict panel."""
     if verdict == "clean":
-        return ("SAFE TO UPLOAD", "green")
-    return ("REVIEW RECOMMENDED", "yellow")
+        return ("SAFE TO UPLOAD", "green", "✓")
+    return ("REVIEW RECOMMENDED", "yellow", "⚠")
+
+
+def _section(console: Console, number: int, title: str, style: str = "bold white") -> None:
+    """Print a numbered section heading."""
+    console.print()
+    console.rule(f"[{style}]{number}. {title}[/{style}]", style="dim")
 
 
 def render_analysis(
@@ -551,138 +649,227 @@ def render_analysis(
     verbose: bool = False,
 ) -> None:
     """Print rich terminal report for one file analysis."""
+    filename = Path(analysis.path).name
     console.print()
-    console.rule(f"[bold]VCF Compliance Inspector[/bold] — {Path(analysis.path).name}")
-    console.print()
-
-    # File information
-    info = Table(title="File Information", box=box.ROUNDED, show_header=False)
-    info.add_column("Field", style="cyan")
-    info.add_column("Value")
-    info.add_row("Path", analysis.path)
-    info.add_row("Size", f"{analysis.size_bytes:,} bytes")
-    info.add_row("SHA-256", analysis.sha256)
-    console.print(info)
-    console.print()
-
-    # Raw hexdump (re-render with color when enabled)
-    raw_bytes = Path(analysis.path).read_bytes()
-    hexdump_display, trunc = pretty_hexdump(
-        raw_bytes,
-        head=analysis.hexdump_head,
-        colorize=not console.no_color and console.is_terminal,
+    console.print(
+        Panel(
+            f"[bold bright_white]VCF Compliance Inspector[/bold bright_white]  "
+            f"[dim]v{VERSION}[/dim]\n"
+            f"[cyan]{filename}[/cyan]",
+            border_style="bright_cyan",
+            padding=(0, 2),
+        )
     )
-    hex_title = "Raw Hex Dump"
-    if trunc and analysis.hexdump_head is not None:
-        hex_title += f" (first {analysis.hexdump_head:,} bytes shown)"
-    console.print(Panel(hexdump_display, title=hex_title, border_style="blue"))
-    console.print()
 
-    # JWT structure
+    # 1. File information
+    _section(console, 1, "File Information", "bold cyan")
+    info = Table(box=box.ROUNDED, show_header=False, padding=(0, 1))
+    info.add_column("Field", style="bold cyan", min_width=12)
+    info.add_column("Value", style="white")
+    info.add_row("Path", analysis.path)
+    info.add_row("Size", f"[white]{analysis.size_bytes:,}[/white] bytes")
+    info.add_row("SHA-256", f"[bright_black]{analysis.sha256}[/bright_black]")
+    info.add_row("JWT", "[green]Yes[/green]" if analysis.is_jwt else "[yellow]No[/yellow]")
+    console.print(info)
+
+    # 2. JWT structure
+    _section(console, 2, "JWT Structure", "bold blue")
     if analysis.is_jwt:
-        console.print(Panel("[green]JWT structure detected[/green] (3 dot-separated segments)", title="JWT Structure"))
+        console.print(
+            Panel(
+                "[bold green]✓ Valid JWT layout detected[/bold green]\n"
+                "[dim]Three dot-separated segments: [/dim]"
+                "[cyan]header[/cyan][dim].[/dim][cyan]payload[/cyan][dim].[/dim][cyan]signature[/cyan]",
+                border_style="green",
+                padding=(0, 2),
+            )
+        )
     else:
         console.print(
             Panel(
-                "[yellow]No valid JWT structure detected[/yellow] "
-                "(expected header.payload.signature)",
-                title="JWT Structure",
+                "[bold yellow]⚠ No JWT structure[/bold yellow]\n"
+                "[dim]Expected format: [/dim][cyan]header[/cyan][dim].[/dim]"
+                "[cyan]payload[/cyan][dim].[/dim][cyan]signature[/cyan]\n"
+                "[dim]Decoded claims unavailable — review raw hex dump at end of report.[/dim]",
                 border_style="yellow",
+                padding=(0, 2),
             )
         )
-    console.print()
 
+    # 3. Decoded header
     if analysis.jwt_header is not None:
+        _section(console, 3, "Decoded Header", "bold blue")
         header_json = json.dumps(analysis.jwt_header, indent=2)
-        console.print(Panel(Syntax(header_json, "json", theme="monokai"), title="Decoded Header"))
-        console.print()
+        console.print(
+            Panel(
+                Syntax(header_json, "json", theme="monokai", line_numbers=False),
+                border_style="blue",
+                padding=(0, 1),
+            )
+        )
 
+    # 4. Decoded payload
     if analysis.jwt_payload is not None:
+        _section(console, 4, "Decoded Payload", "bold blue")
         payload_for_display = dict(analysis.jwt_payload)
-        table = Table(title="Decoded Payload", box=box.ROUNDED)
-        table.add_column("Claim", style="cyan")
-        table.add_column("Value")
+        table = Table(box=box.ROUNDED, show_lines=True, padding=(0, 1))
+        table.add_column("Claim", style="bold cyan", min_width=14)
+        table.add_column("Value", style="white")
 
         for key, value in payload_for_display.items():
             if key == "xr2":
-                display_val = f"[bold magenta]{value}[/bold magenta]  [dim](see xr2 analysis below)[/dim]"
-            else:
+                display_val = (
+                    f"[bold magenta]{value}[/bold magenta]\n"
+                    f"[dim]→ see xr2 fingerprint analysis (section 5)[/dim]"
+                )
+            elif key in EXPECTED_VCF_CLAIMS:
                 display_val = json.dumps(value) if not isinstance(value, str) else value
+                display_val = f"[white]{display_val}[/white]"
+            else:
+                display_val = (
+                    f"[yellow]{json.dumps(value) if not isinstance(value, str) else value}[/yellow]\n"
+                    f"[dim]unexpected claim — review manually[/dim]"
+                )
             table.add_row(key, display_val)
 
         console.print(table)
         if verbose:
-            console.print(Panel(Syntax(json.dumps(payload_for_display, indent=2), "json", theme="monokai"), title="Payload JSON"))
-        console.print()
+            console.print(
+                Panel(
+                    Syntax(json.dumps(payload_for_display, indent=2), "json", theme="monokai"),
+                    title="[dim]Full payload JSON[/dim]",
+                    border_style="dim",
+                )
+            )
 
     if analysis.jwt_errors:
-        console.print(Panel("\n".join(analysis.jwt_errors), title="JWT Decode Warnings", border_style="yellow"))
         console.print()
+        console.print(
+            Panel(
+                "\n".join(f"[yellow]•[/yellow] {err}" for err in analysis.jwt_errors),
+                title="[bold yellow]JWT Decode Warnings[/bold yellow]",
+                border_style="yellow",
+                padding=(0, 2),
+            )
+        )
 
-    # xr2 analysis
-    xr2_panel_lines: list[str] = [f"[dim]{XR2_EXPLANATION}[/dim]", ""]
+    # 5. xr2 analysis
+    _section(console, 5, "xr2 Fingerprint Analysis", "bold magenta")
+    xr2_panel_lines: list[str] = [
+        f"[italic dim]{XR2_EXPLANATION}[/italic dim]",
+        "",
+    ]
     if analysis.xr2.present:
         if analysis.xr2.error:
             xr2_panel_lines.append(f"[yellow]Decode error:[/yellow] {analysis.xr2.error}")
         else:
-            xr2_panel_lines.append(f"Decode method: [cyan]{analysis.xr2.decode_method}[/cyan]")
+            xr2_panel_lines.append(
+                f"[dim]Decode method:[/dim] [cyan]{analysis.xr2.decode_method}[/cyan]"
+            )
             if analysis.xr2.decoded_json is not None:
-                xr2_panel_lines.append("Decoded as JSON:")
-                xr2_panel_lines.append(json.dumps(analysis.xr2.decoded_json, indent=2))
+                xr2_panel_lines.append("[dim]Decoded as JSON:[/dim]")
+                xr2_panel_lines.append(
+                    json.dumps(analysis.xr2.decoded_json, indent=2)
+                )
             elif analysis.xr2.decoded_bytes is not None:
                 length = len(analysis.xr2.decoded_bytes)
-                xr2_panel_lines.append(f"Decoded length: {length} bytes (opaque binary)")
+                xr2_panel_lines.append(
+                    f"[dim]Decoded length:[/dim] [white]{length}[/white] bytes "
+                    f"[dim](opaque binary — correlation ID, not environment inventory)[/dim]"
+                )
                 sub_hex, _ = pretty_hexdump(
                     analysis.xr2.decoded_bytes[:256],
                     head=256,
-                    colorize=False,
+                    colorize=not console.no_color,
                 )
+                xr2_panel_lines.append("")
                 xr2_panel_lines.append(sub_hex)
                 if length > 256:
-                    xr2_panel_lines.append(f"[dim]... truncated ({length - 256} more bytes)[/dim]")
+                    xr2_panel_lines.append(
+                        f"[dim]… {length - 256} more bytes not shown[/dim]"
+                    )
     else:
         xr2_panel_lines.append("[dim]xr2 claim not present in payload.[/dim]")
 
-    console.print(Panel("\n".join(xr2_panel_lines), title="xr2 Fingerprint Analysis", border_style="magenta"))
-    console.print()
+    console.print(
+        Panel(
+            "\n".join(xr2_panel_lines),
+            border_style="magenta",
+            padding=(0, 2),
+        )
+    )
 
-    # Sensitive data scan
+    # 6. Sensitive data scan
+    _section(console, 6, "Sensitive Data Scan", "bold yellow")
     if analysis.sensitive_findings:
-        scan_table = Table(title="Sensitive Data Scan — Findings", box=box.ROUNDED)
-        scan_table.add_column("Category", style="yellow")
-        scan_table.add_column("Match")
-        scan_table.add_column("Context", overflow="fold")
+        scan_table = Table(
+            title=f"[yellow]{len(analysis.sensitive_findings)} finding(s)[/yellow]",
+            box=box.HEAVY_HEAD,
+            show_lines=True,
+            padding=(0, 1),
+        )
+        scan_table.add_column("Category", style="bold yellow", min_width=18)
+        scan_table.add_column("Match", style="red")
+        scan_table.add_column("Context", style="dim", overflow="fold")
         for finding in analysis.sensitive_findings:
             scan_table.add_row(finding.category, finding.match, finding.context)
         console.print(scan_table)
     else:
         console.print(
             Panel(
-                "[green]No obvious proprietary or sensitive data detected[/green]",
-                title="Sensitive Data Scan Results",
+                "[bold green]✓ No obvious proprietary or sensitive data detected[/bold green]\n"
+                "[dim]Keyword and pattern scan over decoded JWT content and raw text.[/dim]",
                 border_style="green",
+                padding=(0, 2),
             )
         )
-    console.print()
 
-    # Summary verdict
-    title, color = _verdict_style(analysis.verdict)
+    # 7. Assurance boundary
+    _section(console, 7, "Assurance Boundary", "bold bright_black")
+    risk_note = SECURITY_LIMITATIONS
+    if RISK_ASSESSMENT_PATH.is_file():
+        risk_note += f"\n\n[link=file://{RISK_ASSESSMENT_PATH}]Full risk assessment: RISK_ASSESSMENT.md[/link]"
+    console.print(
+        Panel(
+            risk_note,
+            title="[dim]What this tool cannot guarantee[/dim]",
+            border_style="bright_black",
+            padding=(0, 2),
+        )
+    )
+
+    # 8. Summary verdict
+    _section(console, 8, "Summary & Verdict", "bold white")
+    title, color, icon = _verdict_style(analysis.verdict)
     summary_lines = [
-        f"Verdict: [bold {color}]{title}[/bold {color}]",
+        f"[bold {color}]{icon}  {title}[/bold {color}]",
         "",
         analysis.verdict_reason,
     ]
     if analysis.expected_claims_present:
         summary_lines.append("")
         summary_lines.append(
-            f"Expected claims present: {', '.join(analysis.expected_claims_present)}"
+            "[dim]Expected claims present:[/dim] "
+            f"[green]{', '.join(analysis.expected_claims_present)}[/green]"
         )
     if analysis.expected_claims_missing:
         summary_lines.append(
-            f"Expected claims missing: {', '.join(analysis.expected_claims_missing)}"
+            "[dim]Expected claims missing:[/dim] "
+            f"[yellow]{', '.join(analysis.expected_claims_missing)}[/yellow]"
         )
 
-    console.print(Panel("\n".join(summary_lines), title="Summary & Verdict", border_style=color))
+    console.print(
+        Panel(
+            "\n".join(summary_lines),
+            border_style=color,
+            padding=(1, 2),
+        )
+    )
+
+    # 9. Raw hex dump — always last
+    _section(console, 9, "Raw Hex & ASCII (byte-level review)", "bold bright_blue")
+    render_raw_hexdump_panel(analysis, console)
+    console.print()
 
 
 def analysis_to_dict(analysis: FileAnalysis) -> dict[str, Any]:
@@ -757,6 +944,9 @@ References:
     https://blogs.vmware.com/cloud-foundation/2025/06/24/licensing-in-vmware-cloud-foundation-9-0/
   What's inside the VCF 9 license file:
     https://www.linkedin.com/pulse/whats-inside-vcf-9-license-file-understanding-connected-kusek-95gfc
+
+Risk assessment (residual upload risks & tool limitations):
+  RISK_ASSESSMENT.md in this repository
 """
     parser = argparse.ArgumentParser(
         prog="vcf_compliance_inspector",
