@@ -1,0 +1,22 @@
+[
+  {
+    "slug": "registration-clean",
+    "sample": "samples/Registration-clean-2025-06-24T12_00_00Z.data",
+    "verdict": "clean"
+  },
+  {
+    "slug": "registration-review",
+    "sample": "samples/Registration-review-2025-06-24T12_00_00Z.data",
+    "verdict": "review_recommended"
+  },
+  {
+    "slug": "registration-malformed",
+    "sample": "samples/Registration-malformed-2025-06-24T12_00_00Z.data",
+    "verdict": "review_recommended"
+  },
+  {
+    "slug": "not-a-jwt-placeholder",
+    "sample": "samples/not-a-jwt-placeholder.data",
+    "verdict": "review_recommended"
+  }
+]

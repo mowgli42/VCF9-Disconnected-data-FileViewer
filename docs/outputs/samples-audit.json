@@ -1,0 +1,169 @@
+{
+  "tool": "vcf_compliance_inspector",
+  "version": "1.2.0",
+  "files": [
+    {
+      "path": "/workspace/samples/Registration-clean-2025-06-24T12_00_00Z.data",
+      "sha256": "02493780d54906d39f35620587c5be3b402aff91f44d20aaaf11b307d115ece2",
+      "size_bytes": 392,
+      "is_jwt": true,
+      "jwt_header": {
+        "alg": "none",
+        "typ": "JWT"
+      },
+      "jwt_payload": {
+        "model_version": "9.0",
+        "asset_name": "VCF Operations",
+        "created_on": "2025-06-24T12:00:00Z",
+        "asset_type": "AC",
+        "asset_id": "00000000-0000-4000-8000-000000000001",
+        "request_id": "00000000-0000-4000-8000-000000000002",
+        "xr2": "b3BhcXVlLWRlbW8tZnA"
+      },
+      "jwt_signature_b64": "c2FtcGxlLXNpZ25hdHVyZS1ub3QtdmVyaWZpZWQ",
+      "jwt_errors": [],
+      "jwt_verified": null,
+      "jwt_verify_error": "Signature verification skipped (no public key provided). alg=none. For production verification supply a trusted public key via --public-key or future config. This is expected in air-gapped review.",
+      "raw_text_preview": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJtb2RlbF92ZXJzaW9uIjoiOS4wIiwiYXNzZXRfbmFtZSI6IlZDRiBPcGVyYXRpb25zIiwiY3JlYXRlZF9vbiI6IjIwMjUtMDYtMjRUMTI6MDA6MDBaIiwiYXNzZXRfdHlwZSI6IkFDIiwiYXNzZXRfaWQiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJyZXF1ZXN0X2lkIjoiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAyIiwieHIyIjoiYjNCaGNYVmxMV1JsYlc4dFpuQSJ9.c2FtcGxlLXNpZ25hdHVyZS1ub3QtdmVyaWZpZWQ",
+      "hexdump": "00000000  65 79 4a 68 62 47 63 69 4f 69 4a 75 62 32 35 6c  |eyJhbGciOiJub25l|\n00000010  49 69 77 69 64 48 6c 77 49 6a 6f 69 53 6c 64 55  |IiwidHlwIjoiSldU|\n00000020  49 6e 30 2e 65 79 4a 74 62 32 52 6c 62 46 39 32  |In0.eyJtb2RlbF92|\n00000030  5a 58 4a 7a 61 57 39 75 49 6a 6f 69 4f 53 34 77  |ZXJzaW9uIjoiOS4w|\n00000040  49 69 77 69 59 58 4e 7a 5a 58 52 66 62 6d 46 74  |IiwiYXNzZXRfbmFt|\n00000050  5a 53 49 36 49 6c 5a 44 52 69 42 50 63 47 56 79  |ZSI6IlZDRiBPcGVy|\n00000060  59 58 52 70 62 32 35 7a 49 69 77 69 59 33 4a 6c  |YXRpb25zIiwiY3Jl|\n00000070  59 58 52 6c 5a 46 39 76 62 69 49 36 49 6a 49 77  |YXRlZF9vbiI6IjIw|\n00000080  4d 6a 55 74 4d 44 59 74 4d 6a 52 55 4d 54 49 36  |MjUtMDYtMjRUMTI6|\n00000090  4d 44 41 36 4d 44 42 61 49 69 77 69 59 58 4e 7a  |MDA6MDBaIiwiYXNz|\n000000a0  5a 58 52 66 64 48 6c 77 5a 53 49 36 49 6b 46 44  |ZXRfdHlwZSI6IkFD|\n000000b0  49 69 77 69 59 58 4e 7a 5a 58 52 66 61 57 51 69  |IiwiYXNzZXRfaWQi|\n000000c0  4f 69 49 77 4d 44 41 77 4d 44 41 77 4d 43 30 77  |OiIwMDAwMDAwMC0w|\n000000d0  4d 44 41 77 4c 54 51 77 4d 44 41 74 4f 44 41 77  |MDAwLTQwMDAtODAw|\n000000e0  4d 43 30 77 4d 44 41 77 4d 44 41 77 4d 44 41 77  |MC0wMDAwMDAwMDAw|\n000000f0  4d 44 45 69 4c 43 4a 79 5a 58 46 31 5a 58 4e 30  |MDEiLCJyZXF1ZXN0|\n00000100  58 32 6c 6b 49 6a 6f 69 4d 44 41 77 4d 44 41 77  |X2lkIjoiMDAwMDAw|\n00000110  4d 44 41 74 4d 44 41 77 4d 43 30 30 4d 44 41 77  |MDAtMDAwMC00MDAw|\n00000120  4c 54 67 77 4d 44 41 74 4d 44 41 77 4d 44 41 77  |LTgwMDAtMDAwMDAw|\n00000130  4d 44 41 77 4d 44 41 79 49 69 77 69 65 48 49 79  |MDAwMDAyIiwieHIy|\n00000140  49 6a 6f 69 59 6a 4e 43 61 47 4e 59 56 6d 78 4d  |IjoiYjNCaGNYVmxM|\n00000150  56 31 4a 73 59 6c 63 34 64 46 70 75 51 53 4a 39  |V1JsYlc4dFpuQSJ9|\n00000160  2e 63 32 46 74 63 47 78 6c 4c 58 4e 70 5a 32 35  |.c2FtcGxlLXNpZ25|\n00000170  68 64 48 56 79 5a 53 31 75 62 33 51 74 64 6d 56  |hdHVyZS1ub3QtdmV|\n00000180  79 61 57 5a 70 5a 57 51                          |yaWZpZWQ|",
+      "hexdump_truncated": false,
+      "hexdump_head": null,
+      "xr2": {
+        "present": true,
+        "raw_value": "b3BhcXVlLWRlbW8tZnA",
+        "decoded_json": null,
+        "decode_method": "base64url",
+        "error": null,
+        "decoded_bytes_hex": "6f70617175652d64656d6f2d6670"
+      },
+      "sensitive_findings": [],
+      "verdict": "clean",
+      "verdict_reason": "Structure matches expected VCF 9 registration JWT; no obvious sensitive data detected.",
+      "expected_claims_present": [
+        "asset_id",
+        "asset_name",
+        "asset_type",
+        "created_on",
+        "model_version",
+        "request_id",
+        "xr2"
+      ],
+      "expected_claims_missing": []
+    },
+    {
+      "path": "/workspace/samples/Registration-review-2025-06-24T12_00_00Z.data",
+      "sha256": "de78349bb1c07ce4ee8df2ba03d440fa91d21332f4fba45bb2a00928c331468a",
+      "size_bytes": 488,
+      "is_jwt": true,
+      "jwt_header": {
+        "alg": "none",
+        "typ": "JWT"
+      },
+      "jwt_payload": {
+        "model_version": "9.0",
+        "asset_name": "VCF Operations",
+        "created_on": "2025-06-24T12:00:00Z",
+        "asset_type": "AC",
+        "asset_id": "00000000-0000-4000-8000-000000000099",
+        "request_id": "00000000-0000-4000-8000-000000000098",
+        "xr2": "b3BhcXVlLWRlbW8tZnA",
+        "notes": "Contact admin@acme.corp.internal or 10.42.0.15 before upload."
+      },
+      "jwt_signature_b64": "c2FtcGxlLXNpZ25hdHVyZS1ub3QtdmVyaWZpZWQ",
+      "jwt_errors": [],
+      "jwt_verified": null,
+      "jwt_verify_error": "Signature verification skipped (no public key provided). alg=none. For production verification supply a trusted public key via --public-key or future config. This is expected in air-gapped review.",
+      "raw_text_preview": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJtb2RlbF92ZXJzaW9uIjoiOS4wIiwiYXNzZXRfbmFtZSI6IlZDRiBPcGVyYXRpb25zIiwiY3JlYXRlZF9vbiI6IjIwMjUtMDYtMjRUMTI6MDA6MDBaIiwiYXNzZXRfdHlwZSI6IkFDIiwiYXNzZXRfaWQiOiIwMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwOTkiLCJyZXF1ZXN0X2lkIjoiMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDk4IiwieHIyIjoiYjNCaGNYVmxMV1JsYlc4dFpuQSIsIm5vdGVzIjoiQ29udGFjdCBhZG1pbkBhY21lLmNvcnAuaW50ZXJuYWwgb3IgMTAuNDIuMC4xNSBiZWZvcmUgdXBsb2FkLiJ9.c2FtcGxlLXNpZ25hdHVyZS1ub3QtdmVyaWZpZWQ",
+      "hexdump": "00000000  65 79 4a 68 62 47 63 69 4f 69 4a 75 62 32 35 6c  |eyJhbGciOiJub25l|\n00000010  49 69 77 69 64 48 6c 77 49 6a 6f 69 53 6c 64 55  |IiwidHlwIjoiSldU|\n00000020  49 6e 30 2e 65 79 4a 74 62 32 52 6c 62 46 39 32  |In0.eyJtb2RlbF92|\n00000030  5a 58 4a 7a 61 57 39 75 49 6a 6f 69 4f 53 34 77  |ZXJzaW9uIjoiOS4w|\n00000040  49 69 77 69 59 58 4e 7a 5a 58 52 66 62 6d 46 74  |IiwiYXNzZXRfbmFt|\n00000050  5a 53 49 36 49 6c 5a 44 52 69 42 50 63 47 56 79  |ZSI6IlZDRiBPcGVy|\n00000060  59 58 52 70 62 32 35 7a 49 69 77 69 59 33 4a 6c  |YXRpb25zIiwiY3Jl|\n00000070  59 58 52 6c 5a 46 39 76 62 69 49 36 49 6a 49 77  |YXRlZF9vbiI6IjIw|\n00000080  4d 6a 55 74 4d 44 59 74 4d 6a 52 55 4d 54 49 36  |MjUtMDYtMjRUMTI6|\n00000090  4d 44 41 36 4d 44 42 61 49 69 77 69 59 58 4e 7a  |MDA6MDBaIiwiYXNz|\n000000a0  5a 58 52 66 64 48 6c 77 5a 53 49 36 49 6b 46 44  |ZXRfdHlwZSI6IkFD|\n000000b0  49 69 77 69 59 58 4e 7a 5a 58 52 66 61 57 51 69  |IiwiYXNzZXRfaWQi|\n000000c0  4f 69 49 77 4d 44 41 77 4d 44 41 77 4d 43 30 77  |OiIwMDAwMDAwMC0w|\n000000d0  4d 44 41 77 4c 54 51 77 4d 44 41 74 4f 44 41 77  |MDAwLTQwMDAtODAw|\n000000e0  4d 43 30 77 4d 44 41 77 4d 44 41 77 4d 44 41 77  |MC0wMDAwMDAwMDAw|\n000000f0  4f 54 6b 69 4c 43 4a 79 5a 58 46 31 5a 58 4e 30  |OTkiLCJyZXF1ZXN0|\n00000100  58 32 6c 6b 49 6a 6f 69 4d 44 41 77 4d 44 41 77  |X2lkIjoiMDAwMDAw|\n00000110  4d 44 41 74 4d 44 41 77 4d 43 30 30 4d 44 41 77  |MDAtMDAwMC00MDAw|\n00000120  4c 54 67 77 4d 44 41 74 4d 44 41 77 4d 44 41 77  |LTgwMDAtMDAwMDAw|\n00000130  4d 44 41 77 4d 44 6b 34 49 69 77 69 65 48 49 79  |MDAwMDk4IiwieHIy|\n00000140  49 6a 6f 69 59 6a 4e 43 61 47 4e 59 56 6d 78 4d  |IjoiYjNCaGNYVmxM|\n00000150  56 31 4a 73 59 6c 63 34 64 46 70 75 51 53 49 73  |V1JsYlc4dFpuQSIs|\n00000160  49 6d 35 76 64 47 56 7a 49 6a 6f 69 51 32 39 75  |Im5vdGVzIjoiQ29u|\n00000170  64 47 46 6a 64 43 42 68 5a 47 31 70 62 6b 42 68  |dGFjdCBhZG1pbkBh|\n00000180  59 32 31 6c 4c 6d 4e 76 63 6e 41 75 61 57 35 30  |Y21lLmNvcnAuaW50|\n00000190  5a 58 4a 75 59 57 77 67 62 33 49 67 4d 54 41 75  |ZXJuYWwgb3IgMTAu|\n000001a0  4e 44 49 75 4d 43 34 78 4e 53 42 69 5a 57 5a 76  |NDIuMC4xNSBiZWZv|\n000001b0  63 6d 55 67 64 58 42 73 62 32 46 6b 4c 69 4a 39  |cmUgdXBsb2FkLiJ9|\n000001c0  2e 63 32 46 74 63 47 78 6c 4c 58 4e 70 5a 32 35  |.c2FtcGxlLXNpZ25|\n000001d0  68 64 48 56 79 5a 53 31 75 62 33 51 74 64 6d 56  |hdHVyZS1ub3QtdmV|\n000001e0  79 61 57 5a 70 5a 57 51                          |yaWZpZWQ|",
+      "hexdump_truncated": false,
+      "hexdump_head": null,
+      "xr2": {
+        "present": true,
+        "raw_value": "b3BhcXVlLWRlbW8tZnA",
+        "decoded_json": null,
+        "decode_method": "base64url",
+        "error": null,
+        "decoded_bytes_hex": "6f70617175652d64656d6f2d6670"
+      },
+      "sensitive_findings": [
+        {
+          "category": "email",
+          "match": "admin@acme.corp.internal",
+          "context": "...b3BhcXVlLWRlbW8tZnA\", \"notes\": \"Contact admin@acme.corp.internal or 10.42.0.15 before upload.\"}"
+        },
+        {
+          "category": "ipv4",
+          "match": "10.42.0.15",
+          "context": "...\": \"Contact admin@acme.corp.internal or 10.42.0.15 before upload.\"}"
+        },
+        {
+          "category": "internal_hostname",
+          "match": "acme.corp.internal",
+          "context": "...VlLWRlbW8tZnA\", \"notes\": \"Contact admin@acme.corp.internal or 10.42.0.15 before upload.\"}"
+        }
+      ],
+      "verdict": "review_recommended",
+      "verdict_reason": "Sensitive-data scanner flagged potential items: email, internal_hostname, ipv4.",
+      "expected_claims_present": [],
+      "expected_claims_missing": []
+    },
+    {
+      "path": "/workspace/samples/Registration-malformed-2025-06-24T12_00_00Z.data",
+      "sha256": "271e36a0b5b53946b2f5b89020f605221460c55f37238d59221dc442add1aa59",
+      "size_bytes": 78,
+      "is_jwt": false,
+      "jwt_header": null,
+      "jwt_payload": null,
+      "jwt_signature_b64": null,
+      "jwt_errors": [],
+      "jwt_verified": null,
+      "jwt_verify_error": null,
+      "raw_text_preview": "eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.!!!not-valid-base64url-payload!!!.c2ln",
+      "hexdump": "00000000  65 79 4a 68 62 47 63 69 4f 69 41 69 62 6d 39 75  |eyJhbGciOiAibm9u|\n00000010  5a 53 49 73 49 43 4a 30 65 58 41 69 4f 69 41 69  |ZSIsICJ0eXAiOiAi|\n00000020  53 6c 64 55 49 6e 30 2e 21 21 21 6e 6f 74 2d 76  |SldUIn0.!!!not-v|\n00000030  61 6c 69 64 2d 62 61 73 65 36 34 75 72 6c 2d 70  |alid-base64url-p|\n00000040  61 79 6c 6f 61 64 21 21 21 2e 63 32 6c 6e        |ayload!!!.c2ln|",
+      "hexdump_truncated": false,
+      "hexdump_head": null,
+      "xr2": {
+        "present": false,
+        "raw_value": null,
+        "decoded_bytes": null,
+        "decoded_json": null,
+        "decode_method": null,
+        "error": null
+      },
+      "sensitive_findings": [],
+      "verdict": "review_recommended",
+      "verdict_reason": "File does not match expected JWT structure.",
+      "expected_claims_present": [],
+      "expected_claims_missing": []
+    },
+    {
+      "path": "/workspace/samples/not-a-jwt-placeholder.data",
+      "sha256": "281dd9b81e6579c3fc152b243b43862422fbd1606b82227738ffe35be71c3d6d",
+      "size_bytes": 138,
+      "is_jwt": false,
+      "jwt_header": null,
+      "jwt_payload": null,
+      "jwt_signature_b64": null,
+      "jwt_errors": [],
+      "jwt_verified": null,
+      "jwt_verify_error": null,
+      "raw_text_preview": "CORRUPTED OR NON-JWT UPLOAD PLACEHOLDER\nThis file is intentionally not a JWT for demo purposes.\nOperators should see hexdump output only.\n",
+      "hexdump": "00000000  43 4f 52 52 55 50 54 45 44 20 4f 52 20 4e 4f 4e  |CORRUPTED OR NON|\n00000010  2d 4a 57 54 20 55 50 4c 4f 41 44 20 50 4c 41 43  |-JWT UPLOAD PLAC|\n00000020  45 48 4f 4c 44 45 52 0a 54 68 69 73 20 66 69 6c  |EHOLDER.This fil|\n00000030  65 20 69 73 20 69 6e 74 65 6e 74 69 6f 6e 61 6c  |e is intentional|\n00000040  6c 79 20 6e 6f 74 20 61 20 4a 57 54 20 66 6f 72  |ly not a JWT for|\n00000050  20 64 65 6d 6f 20 70 75 72 70 6f 73 65 73 2e 0a  | demo purposes..|\n00000060  4f 70 65 72 61 74 6f 72 73 20 73 68 6f 75 6c 64  |Operators should|\n00000070  20 73 65 65 20 68 65 78 64 75 6d 70 20 6f 75 74  | see hexdump out|\n00000080  70 75 74 20 6f 6e 6c 79 2e 0a                    |put only..|",
+      "hexdump_truncated": false,
+      "hexdump_head": null,
+      "xr2": {
+        "present": false,
+        "raw_value": null,
+        "decoded_bytes": null,
+        "decoded_json": null,
+        "decode_method": null,
+        "error": null
+      },
+      "sensitive_findings": [],
+      "verdict": "review_recommended",
+      "verdict_reason": "File does not match expected JWT structure.",
+      "expected_claims_present": [],
+      "expected_claims_missing": []
+    }
+  ]
+}
