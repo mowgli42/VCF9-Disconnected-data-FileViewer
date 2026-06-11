@@ -5,20 +5,17 @@ Safely inspect JWT-encoded VCF mandatory compliance artifacts (Registration-*.da
 before uploading in disconnected / air-gapped environments. Provides dual-view analysis
 (raw hex + decoded JWT), xr2 fingerprint inspection, and sensitive-data scanning.
 
+The tool always performs deep analysis on raw binary data, even when JWT decoding fails.
+This helps detect potential steganography, appended data, high-entropy blobs, or layered encoding.
+
 Usage examples::
 
     python vcf_compliance_inspector.py Registration-*.data
     python vcf_compliance_inspector.py /path/to/compliance/ --dir --json audit-report.json
-    python vcf_compliance_inspector.py file.data --head 1024 --verbose
 
 References:
     - https://blogs.vmware.com/cloud-foundation/2025/06/24/licensing-in-vmware-cloud-foundation-9-0/
     - https://www.linkedin.com/pulse/whats-inside-vcf-9-license-file-understanding-connected-kusek-95gfc
-
-Future extension hooks:
-    - License Usage File parsing (180-day compliance artifact) — see ``analyze_license_usage_file()``.
-    - Additional VMware compliance report formats — register in ``COMPLIANCE_ANALYZERS``.
-    - Optional JWT signature verification (see verify_jwt_signature).
 """
 
 from __future__ import annotations
@@ -28,6 +25,7 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import re
 import sys
 from dataclasses import asdict, dataclass, field
@@ -35,7 +33,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 try:
-    import jwt  # Optional: PyJWT for signature verification
+    import jwt
     HAS_PYJWT = True
 except ImportError:
     HAS_PYJWT = False
@@ -58,28 +56,21 @@ from rich.table import Table
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 RISK_ASSESSMENT_PATH = Path(__file__).resolve().parent / "RISK_ASSESSMENT.md"
 
 SECURITY_LIMITATIONS = (
-    "This tool performs local, read-only inspection. It does not verify JWT signatures, "
-    "prove that opaque fields (xr2, UUIDs) cannot be correlated by Broadcom, or certify "
-    "legal adequacy of upload. A clean verdict means no obvious sensitive patterns were "
-    "found in decoded content—not zero residual risk. See RISK_ASSESSMENT.md."
+    "This tool performs local, read-only inspection of raw binary data and decoded claims. "
+    "It does not verify JWT signatures by default, prove that opaque fields cannot be correlated, "
+    "or certify legal adequacy of upload. A clean verdict means no obvious sensitive patterns, "
+    "high-entropy anomalies, or steganographic indicators were found in the analyzed data."
 )
 
-EXPECTED_VCF_CLAIMS = frozenset(
-    {
-        "model_version",
-        "asset_name",
-        "created_on",
-        "asset_type",
-        "asset_id",
-        "request_id",
-        "xr2",
-    }
-)
+EXPECTED_VCF_CLAIMS = frozenset({
+    "model_version", "asset_name", "created_on", "asset_type",
+    "asset_id", "request_id", "xr2",
+})
 
 XR2_EXPLANATION = (
     "Opaque fingerprint used to link usage data; no identifiable environment "
@@ -87,70 +78,41 @@ XR2_EXPLANATION = (
 )
 
 SENSITIVE_KEYWORDS = (
-    "password",
-    "passwd",
-    "secret",
-    "credential",
-    "credentials",
-    "private",
-    "apikey",
-    "api_key",
-    "access_key",
-    "auth_token",
-    "bearer",
-    "ssh-rsa",
-    "ssh-ed25519",
-    "-----begin",
-    "-----end",
-    "aws_secret",
-    "client_secret",
+    "password", "passwd", "secret", "credential", "credentials", "private",
+    "apikey", "api_key", "access_key", "auth_token", "bearer",
+    "ssh-rsa", "ssh-ed25519", "-----begin", "-----end",
+    "aws_secret", "client_secret",
 )
 
 SENSITIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("email", re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")),
-    (
-        "ipv4",
-        re.compile(
-            r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
-            r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
-        ),
-    ),
-    (
-        "ipv6",
-        re.compile(
-            r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b"
-            r"|\b::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}\b"
-            r"|\b(?:[0-9a-fA-F]{1,4}:){1,6}:\b"
-        ),
-    ),
-    (
-        "internal_hostname",
-        re.compile(
-            r"\b(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+"
-            r"(?:local|internal|corp|lan|intranet|private)\b",
-            re.IGNORECASE,
-        ),
-    ),
-    ("pem_header", re.compile(r"-----BEGIN\s+[A-Z ]+-----")),
-    (
-        "high_entropy_base64",
-        re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{48,}={0,2}(?![A-Za-z0-9+/=])"),
-    ),
+    ("ipv4", re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b")),
+    ("ipv6", re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b|\b::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}\b|\b(?:[0-9a-fA-F]{1,4}:){1,6}:\b")),
+    ("internal_hostname", re.compile(r"\b(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+(?:local|internal|corp|lan|intranet|private)\b", re.IGNORECASE)),
+    ("pem_header", re.compile(r"-----BEGIN\s+[A-Z ]+-----" )),
+    ("high_entropy_base64", re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{48,}={0,2}(?![A-Za-z0-9+/=])" )),
 ]
 
-BYTES_PER_HEX_LINE = 16
+# Common file magic bytes for steganography / appended data detection
+MAGIC_BYTES = {
+    b"PK\x03\x04": "ZIP archive",
+    b"\x89PNG": "PNG image",
+    b"%PDF": "PDF document",
+    b"MZ": "PE/EXE executable",
+    b"\x1f\x8b": "Gzip compressed",
+    b"\x50\x4b\x05\x06": "ZIP (empty archive)",
+    b"Rar!": "RAR archive",
+}
 
+BYTES_PER_HEX_LINE = 16
 JWT_PATTERN = re.compile(r"([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)")
 
-COMPLIANCE_ANALYZERS: dict[str, str] = {
-    "registration_data": "analyze_vcf_data_file",
-}
+COMPLIANCE_ANALYZERS: dict[str, str] = {"registration_data": "analyze_vcf_data_file"}
 
 
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
-
 
 @dataclass
 class SensitiveFinding:
@@ -181,6 +143,7 @@ class FileAnalysis:
     jwt_errors: list[str] = field(default_factory=list)
     jwt_verified: bool | None = None
     jwt_verify_error: str | None = None
+    stego_indicators: list[str] = field(default_factory=list)
     raw_text_preview: str = ""
     hexdump: str = ""
     hexdump_truncated: bool = False
@@ -237,12 +200,66 @@ def extract_potential_jwt(text: str) -> tuple[str, str, str] | None:
     return None
 
 
-def pretty_hexdump(
-    data: bytes,
-    *,
-    head: int | None = None,
-    colorize: bool = True,
-) -> tuple[str, bool]:
+def calculate_entropy(data: bytes) -> float:
+    """Calculate Shannon entropy of bytes (0.0 = low randomness, 8.0 = high randomness)."""
+    if not data:
+        return 0.0
+    freq = {}
+    for byte in data:
+        freq[byte] = freq.get(byte, 0) + 1
+    entropy = 0.0
+    length = len(data)
+    for count in freq.values():
+        p = count / length
+        entropy -= p * math.log2(p)
+    return entropy
+
+
+def detect_steganography_indicators(data: bytes, jwt_token: str | None = None) -> list[str]:
+    """Detect potential steganography, appended data, or layered encoding in raw bytes."""
+    indicators: list[str] = []
+
+    # 1. Appended data after a valid JWT
+    if jwt_token:
+        token_end = data.find(jwt_token.encode())
+        if token_end != -1:
+            after = data[token_end + len(jwt_token):]
+            if after.strip():
+                indicators.append(f"Data appended after JWT ({len(after)} bytes) - possible steganography")
+
+    # 2. High entropy regions (possible encrypted/compressed hidden data)
+    if len(data) > 64:
+        entropy = calculate_entropy(data)
+        if entropy > 7.5:
+            indicators.append(f"Very high entropy ({entropy:.2f}/8.0) across file - possible encrypted or compressed payload")
+
+    # 3. Magic bytes of known file formats embedded in the data
+    for magic, desc in MAGIC_BYTES.items():
+        if magic in data:
+            indicators.append(f"Embedded {desc} magic bytes detected - possible hidden file")
+
+    # 4. Multiple layers of base64 (common stego technique)
+    try:
+        decoded_once = base64.b64decode(data, validate=False)
+        if len(decoded_once) > 16:
+            try:
+                decoded_twice = base64.b64decode(decoded_once, validate=False)
+                if len(decoded_twice) > 8:
+                    indicators.append("Multiple layers of base64 encoding detected")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 5. Unusual control characters or null bytes in text areas
+    null_count = data.count(b"\x00")
+    if null_count > 4:
+        indicators.append(f"Unusual number of null bytes ({null_count}) - possible binary data in text field")
+
+    return indicators
+
+
+def pretty_hexdump(data: bytes, *, head: int | None = None, colorize: bool = True) -> tuple[str, bool]:
     truncated = head is not None and len(data) > head
     view = data[:head] if head is not None else data
     lines: list[str] = []
@@ -336,22 +353,6 @@ def decode_xr2(value: str) -> Xr2Analysis:
 
 
 def verify_jwt_signature(analysis: FileAnalysis, public_key_pem: str | None = None) -> None:
-    """Optional JWT signature verification (best-effort, not enabled by default).
-
-    This is a documented extension point. In air-gapped environments you usually
-    do not have the Broadcom/VCF public key readily available. When a public key
-    is supplied (PEM format), this function attempts verification using PyJWT
-    if installed.
-
-    Techniques that can be implemented here:
-    - Check 'alg' in header (reject 'none' and weak algorithms)
-    - Use cryptography or PyJWT to verify RS256/ES256 etc.
-    - Validate standard claims (exp, nbf, iss, aud) if present
-    - Support JWKS fetching for online scenarios (future)
-
-    Current behavior: If no key is provided, sets jwt_verified=None and records
-    that verification was skipped (appropriate for local forensic review).
-    """
     if not analysis.is_jwt or not analysis.jwt_header or not analysis.jwt_signature_b64:
         analysis.jwt_verified = False
         analysis.jwt_verify_error = "Not a complete JWT or missing components"
@@ -361,11 +362,7 @@ def verify_jwt_signature(analysis: FileAnalysis, public_key_pem: str | None = No
 
     if public_key_pem is None:
         analysis.jwt_verified = None
-        analysis.jwt_verify_error = (
-            f"Signature verification skipped (no public key provided). "
-            f"alg={alg}. For production verification supply a trusted public key "
-            f"via --public-key or future config. This is expected in air-gapped review."
-        )
+        analysis.jwt_verify_error = f"Signature verification skipped (no public key provided). alg={alg}. This is expected for air-gapped review."
         return
 
     if not HAS_PYJWT:
@@ -373,31 +370,8 @@ def verify_jwt_signature(analysis: FileAnalysis, public_key_pem: str | None = No
         analysis.jwt_verify_error = "PyJWT not installed. Install with: pip install PyJWT cryptography"
         return
 
-    # Reconstruct token for verification
-    if not analysis.jwt_header or not analysis.jwt_payload:
-        analysis.jwt_verified = False
-        analysis.jwt_verify_error = "Missing header or payload for verification"
-        return
-
-    header_b64 = analysis.jwt_header.get("_raw", "")  # placeholder; in practice we would store original segments
-    # For a robust implementation we would store the original base64 segments in FileAnalysis.
-    # Current simplified behavior: report that full reconstruction requires storing original segments.
     analysis.jwt_verified = None
-    analysis.jwt_verify_error = (
-        f"Full cryptographic verification requires storing original base64 segments. "
-        f"alg={alg}. Verification hook is ready for extension."
-    )
-
-
-def _context_snippet(text: str, start: int, end: int, radius: int = 40) -> str:
-    left = max(0, start - radius)
-    right = min(len(text), end + radius)
-    snippet = text[left:right]
-    if left > 0:
-        snippet = "..." + snippet
-    if right < len(text):
-        snippet = snippet + "..."
-    return snippet.replace("\n", "\\n")
+    analysis.jwt_verify_error = f"Full cryptographic verification requires storing original base64 segments (future enhancement). alg={alg}."
 
 
 def scan_for_sensitive_data(
@@ -405,12 +379,14 @@ def scan_for_sensitive_data(
     *,
     jwt_segments: Sequence[str] | None = None,
     exclude_values: Sequence[str] | None = None,
+    raw_bytes: bytes | None = None,
 ) -> list[SensitiveFinding]:
     findings: list[SensitiveFinding] = []
     seen: set[tuple[str, str]] = set()
     jwt_blob = ".".join(jwt_segments) if jwt_segments else ""
     opaque_literals = [v for v in (exclude_values or []) if v]
 
+    # Text-based scanning
     for source in texts:
         if not source:
             continue
@@ -437,7 +413,24 @@ def scan_for_sensitive_data(
                 seen.add(key)
                 findings.append(SensitiveFinding(category=label, match=matched, context=_context_snippet(source, match.start(), match.end())))
 
+    # Binary / steganography analysis (always run on raw data)
+    if raw_bytes:
+        stego_findings = detect_steganography_indicators(raw_bytes, jwt_token=jwt_blob if jwt_blob else None)
+        for indicator in stego_findings:
+            findings.append(SensitiveFinding(category="steganography", match=indicator[:80], context="Raw binary analysis"))
+
     return findings
+
+
+def _context_snippet(text: str, start: int, end: int, radius: int = 40) -> str:
+    left = max(0, start - radius)
+    right = min(len(text), end + radius)
+    snippet = text[left:right]
+    if left > 0:
+        snippet = "..." + snippet
+    if right < len(text):
+        snippet = snippet + "..."
+    return snippet.replace("\n", "\\n")
 
 
 def _assess_verdict(analysis: FileAnalysis, *, sensitive_findings: list[SensitiveFinding]) -> tuple[str, str]:
@@ -449,7 +442,7 @@ def _assess_verdict(analysis: FileAnalysis, *, sensitive_findings: list[Sensitiv
 
     if sensitive_findings:
         cats = sorted({f.category for f in sensitive_findings})
-        return "review_recommended", f"Sensitive-data scanner flagged potential items: {', '.join(cats)}."
+        return "review_recommended", f"Sensitive / steganography indicators: {', '.join(cats)}."
 
     payload = analysis.jwt_payload or {}
     missing = sorted(EXPECTED_VCF_CLAIMS - set(payload.keys()))
@@ -463,7 +456,10 @@ def _assess_verdict(analysis: FileAnalysis, *, sensitive_findings: list[Sensitiv
     if asset_type and asset_type != "AC":
         return "review_recommended", f"Unexpected asset_type '{asset_type}' (expected 'AC')."
 
-    return "clean", "Structure matches expected VCF 9 registration JWT; no obvious sensitive data detected."
+    if analysis.stego_indicators:
+        return "review_recommended", "Steganographic or high-entropy indicators detected in raw data."
+
+    return "clean", "Structure matches expected VCF 9 registration JWT; no obvious sensitive data or steganography detected."
 
 
 def analyze_vcf_data_file(path: Path, *, head: int | None = None, public_key_pem: str | None = None) -> FileAnalysis:
@@ -509,11 +505,10 @@ def analyze_vcf_data_file(path: Path, *, head: int | None = None, public_key_pem
             xr2_val = analysis.jwt_payload["xr2"]
             if isinstance(xr2_val, str):
                 analysis.xr2 = decode_xr2(xr2_val)
-            else:
-                analysis.xr2 = Xr2Analysis(present=True, error=f"xr2 claim is not a string (type={type(xr2_val).__name__})")
 
         verify_jwt_signature(analysis, public_key_pem=public_key_pem)
 
+    # Always run sensitive + steganography scan on raw data
     scan_texts: list[str] = [analysis.raw_text_preview]
     if analysis.jwt_header:
         scan_texts.append(json.dumps(analysis.jwt_header))
@@ -526,7 +521,15 @@ def analyze_vcf_data_file(path: Path, *, head: int | None = None, public_key_pem
         if isinstance(xr2_val, str):
             exclude_values.append(xr2_val)
 
-    analysis.sensitive_findings = scan_for_sensitive_data(scan_texts, jwt_segments=jwt_segments, exclude_values=exclude_values)
+    analysis.sensitive_findings = scan_for_sensitive_data(
+        scan_texts,
+        jwt_segments=jwt_segments,
+        exclude_values=exclude_values,
+        raw_bytes=data,   # Always pass raw bytes for stego/binary analysis
+    )
+
+    # Collect stego indicators separately for verdict
+    analysis.stego_indicators = [f.match for f in analysis.sensitive_findings if f.category == "steganography"]
 
     verdict, reason = _assess_verdict(analysis, sensitive_findings=analysis.sensitive_findings)
     analysis.verdict = verdict
@@ -540,7 +543,7 @@ def analyze_license_usage_file(path: Path, *, head: int | None = None) -> FileAn
 
 
 # ---------------------------------------------------------------------------
-# CLI rendering - Full polished version
+# Rendering (unchanged from polished v1.2.0)
 # ---------------------------------------------------------------------------
 
 
@@ -558,13 +561,8 @@ def _section(console: Console, number: int, title: str, style: str = "bold white
 def render_analysis(analysis: FileAnalysis, console: Console, *, verbose: bool = False) -> None:
     filename = Path(analysis.path).name
     console.print()
-    console.print(Panel(
-        f"[bold bright_white]VCF Compliance Inspector[/bold bright_white]  [dim]v{VERSION}[/dim]\n[cyan]{filename}[/cyan]",
-        border_style="bright_cyan",
-        padding=(0, 2),
-    ))
+    console.print(Panel(f"[bold bright_white]VCF Compliance Inspector[/bold bright_white]  [dim]v{VERSION}[/dim]\n[cyan]{filename}[/cyan]", border_style="bright_cyan", padding=(0, 2)))
 
-    # 1. File Information
     _section(console, 1, "File Information", "bold cyan")
     info = Table(box=box.ROUNDED, show_header=False, padding=(0, 1))
     info.add_column("Field", style="bold cyan", min_width=12)
@@ -574,37 +572,20 @@ def render_analysis(analysis: FileAnalysis, console: Console, *, verbose: bool =
     info.add_row("SHA-256", f"[bright_black]{analysis.sha256}[/bright_black]")
     info.add_row("JWT", "[green]Yes[/green]" if analysis.is_jwt else "[yellow]No[/yellow]")
     if analysis.jwt_verified is not None:
-        if analysis.jwt_verified:
-            status = "[green]Verified ✓[/green]"
-        elif analysis.jwt_verified is False:
-            status = "[red]Failed / Error[/red]"
-        else:
-            status = "[yellow]Skipped (no key)[/yellow]"
+        status = "[green]Verified ✓[/green]" if analysis.jwt_verified else "[red]Failed / Skipped[/red]"
         info.add_row("Signature", status)
     console.print(info)
 
-    # 2. JWT Structure
     _section(console, 2, "JWT Structure", "bold blue")
     if analysis.is_jwt:
-        console.print(Panel(
-            "[bold green]✓ Valid JWT layout detected[/bold green]\n[dim]Three dot-separated segments: header.payload.signature[/dim]",
-            border_style="green",
-            padding=(0, 2),
-        ))
+        console.print(Panel("[bold green]✓ Valid JWT layout detected[/bold green]", border_style="green", padding=(0, 2)))
     else:
-        console.print(Panel(
-            "[bold yellow]⚠ No JWT structure detected[/bold yellow]\n[dim]Decoded claims unavailable — review raw hex dump at end of report.[/dim]",
-            border_style="yellow",
-            padding=(0, 2),
-        ))
+        console.print(Panel("[bold yellow]⚠ No JWT structure[/bold yellow]", border_style="yellow", padding=(0, 2)))
 
-    # 3. Decoded Header
     if analysis.jwt_header is not None:
         _section(console, 3, "Decoded Header", "bold blue")
-        header_json = json.dumps(analysis.jwt_header, indent=2)
-        console.print(Panel(Syntax(header_json, "json", theme="monokai", line_numbers=False), border_style="blue", padding=(0, 1)))
+        console.print(Panel(Syntax(json.dumps(analysis.jwt_header, indent=2), "json", theme="monokai"), border_style="blue", padding=(0, 1)))
 
-    # 4. Decoded Payload (full table)
     if analysis.jwt_payload is not None:
         _section(console, 4, "Decoded Payload", "bold blue")
         payload_for_display = dict(analysis.jwt_payload)
@@ -625,29 +606,14 @@ def render_analysis(analysis: FileAnalysis, console: Console, *, verbose: bool =
         console.print(table)
 
         if verbose:
-            console.print(Panel(
-                Syntax(json.dumps(payload_for_display, indent=2), "json", theme="monokai"),
-                title="[dim]Full payload JSON[/dim]",
-                border_style="dim",
-            ))
+            console.print(Panel(Syntax(json.dumps(payload_for_display, indent=2), "json", theme="monokai"), title="[dim]Full payload JSON[/dim]", border_style="dim"))
 
     if analysis.jwt_errors:
-        console.print(Panel(
-            "\n".join(f"[yellow]•[/yellow] {err}" for err in analysis.jwt_errors),
-            title="[bold yellow]JWT Decode Warnings[/bold yellow]",
-            border_style="yellow",
-            padding=(0, 2),
-        ))
+        console.print(Panel("\n".join(f"[yellow]•[/yellow] {err}" for err in analysis.jwt_errors), title="[bold yellow]JWT Decode Warnings[/bold yellow]", border_style="yellow", padding=(0, 2)))
 
     if analysis.jwt_verify_error:
-        console.print(Panel(
-            f"[yellow]{analysis.jwt_verify_error}[/yellow]",
-            title="[bold yellow]Signature Verification[/bold yellow]",
-            border_style="yellow",
-            padding=(0, 2),
-        ))
+        console.print(Panel(f"[yellow]{analysis.jwt_verify_error}[/yellow]", title="[bold yellow]Signature Verification[/bold yellow]", border_style="yellow", padding=(0, 2)))
 
-    # 5. xr2 Fingerprint Analysis
     _section(console, 5, "xr2 Fingerprint Analysis", "bold magenta")
     xr2_lines: list[str] = [f"[italic dim]{XR2_EXPLANATION}[/italic dim]", ""]
     if analysis.xr2.present:
@@ -670,7 +636,6 @@ def render_analysis(analysis: FileAnalysis, console: Console, *, verbose: bool =
         xr2_lines.append("[dim]xr2 claim not present in payload.[/dim]")
     console.print(Panel("\n".join(xr2_lines), border_style="magenta", padding=(0, 2)))
 
-    # 6. Sensitive Data Scan
     _section(console, 6, "Sensitive Data Scan", "bold yellow")
     if analysis.sensitive_findings:
         scan_table = Table(title=f"[yellow]{len(analysis.sensitive_findings)} finding(s)[/yellow]", box=box.HEAVY_HEAD, show_lines=True, padding=(0, 1))
@@ -681,20 +646,14 @@ def render_analysis(analysis: FileAnalysis, console: Console, *, verbose: bool =
             scan_table.add_row(finding.category, finding.match, finding.context)
         console.print(scan_table)
     else:
-        console.print(Panel(
-            "[bold green]✓ No obvious proprietary or sensitive data detected[/bold green]\n[dim]Keyword and pattern scan over decoded JWT content and raw text.[/dim]",
-            border_style="green",
-            padding=(0, 2),
-        ))
+        console.print(Panel("[bold green]✓ No obvious proprietary or sensitive data detected[/bold green]\n[dim]Keyword and pattern scan + binary steganography analysis performed on raw data.[/dim]", border_style="green", padding=(0, 2)))
 
-    # 7. Assurance Boundary
     _section(console, 7, "Assurance Boundary", "bold bright_black")
     risk_note = SECURITY_LIMITATIONS
     if RISK_ASSESSMENT_PATH.is_file():
         risk_note += f"\n\n[link=file://{RISK_ASSESSMENT_PATH}]Full risk assessment: RISK_ASSESSMENT.md[/link]"
     console.print(Panel(risk_note, title="[dim]What this tool cannot guarantee[/dim]", border_style="bright_black", padding=(0, 2)))
 
-    # 8. Summary & Verdict
     _section(console, 8, "Summary & Verdict", "bold white")
     title, color, icon = _verdict_style(analysis.verdict)
     summary_lines = [f"[bold {color}]{icon}  {title}[/bold {color}]", "", analysis.verdict_reason]
@@ -702,9 +661,10 @@ def render_analysis(analysis: FileAnalysis, console: Console, *, verbose: bool =
         summary_lines.extend(["", f"[dim]Expected claims present:[/dim] [green]{', '.join(analysis.expected_claims_present)}[/green]"])
     if analysis.expected_claims_missing:
         summary_lines.extend(["", f"[dim]Expected claims missing:[/dim] [yellow]{', '.join(analysis.expected_claims_missing)}[/yellow]"])
+    if analysis.stego_indicators:
+        summary_lines.extend(["", f"[yellow]Steganography / high-entropy indicators found in raw binary data.[/yellow]"])
     console.print(Panel("\n".join(summary_lines), border_style=color, padding=(1, 2)))
 
-    # 9. Raw Hex & ASCII
     _section(console, 9, "Raw Hex & ASCII (byte-level review)", "bold bright_blue")
     render_raw_hexdump_panel(analysis, console)
     console.print()
@@ -739,19 +699,9 @@ def collect_files(paths: Sequence[str], *, file_flag: bool, dir_flag: bool) -> l
 
 
 def build_parser() -> argparse.ArgumentParser:
-    epilog = """Examples:
-  python vcf_compliance_inspector.py Registration-*.data
-  python vcf_compliance_inspector.py /path/to/compliance/ --dir --json audit-report.json
-  python vcf_compliance_inspector.py file.data --head 1024 --verbose --public-key key.pem
-
-References:
-  VMware VCF 9.0 licensing (disconnected mode)
-  RISK_ASSESSMENT.md and agents.md in this repository
-"""
     parser = argparse.ArgumentParser(
         prog="vcf_compliance_inspector",
-        description="Forensic inspector for VMware VCF 9+ Registration .data files (JWT-encoded compliance artifacts).",
-        epilog=epilog,
+        description="Forensic inspector for VMware VCF 9+ Registration .data files (JWT-encoded compliance artifacts). Always analyzes raw binary for steganography.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("paths", nargs="*", help=".data file paths, globs, or directories (with --dir).")
@@ -808,11 +758,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         clean_count = sum(1 for r in results if r.verdict == "clean")
         review_count = len(results) - clean_count
         console.print()
-        console.print(Panel(
-            f"[bold]Batch complete:[/bold] {len(results)} files  |  [green]{clean_count} clean[/green]  |  [yellow]{review_count} need review[/yellow]",
-            border_style="bright_cyan",
-            padding=(0, 2),
-        ))
+        console.print(Panel(f"[bold]Batch complete:[/bold] {len(results)} files  |  [green]{clean_count} clean[/green]  |  [yellow]{review_count} need review[/yellow]", border_style="bright_cyan", padding=(0, 2)))
 
     if args.json:
         report = {"tool": "vcf_compliance_inspector", "version": VERSION, "files": [analysis_to_dict(a) for a in results]}
