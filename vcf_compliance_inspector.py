@@ -68,8 +68,21 @@ EXPECTED_VCF_CLAIMS = frozenset({
 })
 
 XR2_EXPLANATION = (
-    "Opaque fingerprint used to link usage data; no identifiable environment "
-    "details can be derived (per Broadcom / VMware VCF 9 documentation)."
+    "xr2 is Broadcom's opaque VCF Operations instance fingerprint (VCF 9.0+). "
+    "Together with asset_id it links subsequent usage data to the registered "
+    "VCF Operations instance. No identifiable environment details can be derived "
+    "from the fingerprint by design."
+)
+
+XR2_PURPOSE_DETAIL = (
+    "Per Broadcom / VMware VCF 9 disconnected registration documentation, xr2 is "
+    "a non-identifying instance fingerprint used for licensing validation and usage "
+    "tracking linkage — not secrets, PII, or environment metadata."
+)
+
+XR2_REFERENCE_URL = (
+    "https://blogs.vmware.com/cloud-foundation/2025/06/24/"
+    "licensing-in-vmware-cloud-foundation-9-0/"
 )
 
 SENSITIVE_KEYWORDS = (
@@ -115,6 +128,14 @@ class SensitiveFinding:
 
 
 @dataclass
+class HexAnnotation:
+    start: int
+    end: int
+    label: str
+    style: str
+
+
+@dataclass
 class Xr2Analysis:
     present: bool
     raw_value: str | None = None
@@ -122,6 +143,7 @@ class Xr2Analysis:
     decoded_json: Any | None = None
     decode_method: str | None = None
     error: str | None = None
+    purpose: str = field(default_factory=lambda: XR2_PURPOSE_DETAIL)
 
 
 @dataclass
@@ -141,6 +163,7 @@ class FileAnalysis:
     hexdump: str = ""
     hexdump_truncated: bool = False
     hexdump_head: int | None = None
+    jwt_byte_ranges: list[HexAnnotation] = field(default_factory=list)
     xr2: Xr2Analysis = field(default_factory=lambda: Xr2Analysis(present=False))
     sensitive_findings: list[SensitiveFinding] = field(default_factory=list)
     verdict: str = "review_recommended"
@@ -191,6 +214,53 @@ def extract_potential_jwt(text: str) -> tuple[str, str, str] | None:
     if len(parts) == 3 and all(parts):
         return parts[0], parts[1], parts[2]
     return None
+
+
+def compute_jwt_byte_ranges(
+    data: bytes,
+    text: str,
+    payload: dict[str, Any] | None = None,
+) -> list[HexAnnotation]:
+    """Map JWT header/payload/signature (and xr2 claim text) to byte offsets in raw file data."""
+    annotations: list[HexAnnotation] = []
+    match = JWT_PATTERN.search(text.strip())
+    if not match:
+        return annotations
+
+    token = match.group(1)
+    token_bytes = token.encode("utf-8")
+    token_start = data.find(token_bytes)
+    if token_start < 0:
+        return annotations
+
+    segment_styles = (
+        ("header", "bold cyan"),
+        ("payload", "bold blue"),
+        ("signature", "bold bright_black"),
+    )
+    offset = token_start
+    for part, (label, style) in zip(token.split("."), segment_styles):
+        part_len = len(part.encode("utf-8"))
+        annotations.append(HexAnnotation(offset, offset + part_len, label, style))
+        offset += part_len + 1  # dot separator
+
+    if payload and isinstance(payload.get("xr2"), str):
+        xr2_val = payload["xr2"]
+        xr2_start = data.find(xr2_val.encode("utf-8"), token_start)
+        if xr2_start >= 0:
+            annotations.append(
+                HexAnnotation(xr2_start, xr2_start + len(xr2_val.encode("utf-8")), "xr2", "bold magenta reverse")
+            )
+
+    return annotations
+
+
+def _annotation_for_offset(annotations: Sequence[HexAnnotation], offset: int) -> HexAnnotation | None:
+    """Prefer the narrowest (most specific) annotation covering this byte offset."""
+    matches = [a for a in annotations if a.start <= offset < a.end]
+    if not matches:
+        return None
+    return min(matches, key=lambda a: a.end - a.start)
 
 
 def calculate_entropy(data: bytes) -> float:
@@ -257,10 +327,17 @@ def detect_steganography_indicators(
     return indicators
 
 
-def pretty_hexdump(data: bytes, *, head: int | None = None, colorize: bool = True) -> tuple[str, bool]:
+def pretty_hexdump(
+    data: bytes,
+    *,
+    head: int | None = None,
+    colorize: bool = True,
+    annotations: Sequence[HexAnnotation] | None = None,
+) -> tuple[str, bool]:
     truncated = head is not None and len(data) > head
     view = data[:head] if head is not None else data
     lines: list[str] = []
+    ranges = list(annotations or [])
 
     if colorize:
         lines.append("[bold white]Offset[/bold white]    [bold white]Hex[/bold white]                                              [bold white]ASCII[/bold white]")
@@ -272,8 +349,13 @@ def pretty_hexdump(data: bytes, *, head: int | None = None, colorize: bool = Tru
         ascii_parts: list[str] = []
 
         for index, byte in enumerate(chunk):
+            global_offset = offset + index
+            ann = _annotation_for_offset(ranges, global_offset) if ranges else None
             if colorize:
-                tone = "bright_blue" if index % 2 == 0 else "blue"
+                if ann:
+                    tone = ann.style
+                else:
+                    tone = "bright_blue" if index % 2 == 0 else "blue"
                 hex_parts.append(f"[{tone}]{byte:02x}[/{tone}]")
             else:
                 hex_parts.append(f"{byte:02x}")
@@ -281,7 +363,10 @@ def pretty_hexdump(data: bytes, *, head: int | None = None, colorize: bool = Tru
             if 32 <= byte <= 126:
                 ch = chr(byte)
                 if colorize:
-                    ascii_parts.append(f"[bold green]{ch}[/bold green]")
+                    if ann:
+                        ascii_parts.append(f"[{ann.style}]{ch}[/{ann.style}]")
+                    else:
+                        ascii_parts.append(f"[bold green]{ch}[/bold green]")
                 else:
                     ascii_parts.append(ch)
             elif colorize:
@@ -311,18 +396,47 @@ def pretty_hexdump(data: bytes, *, head: int | None = None, colorize: bool = Tru
     return "\n".join(lines), truncated
 
 
-def render_raw_hexdump_panel(analysis: FileAnalysis, console: Console) -> None:
+def _hexdump_panel_width(hexdump_display: str) -> int:
+    """Estimate panel width from longest logical line (strip Rich markup for width)."""
+    plain = re.sub(r"\[[^\]]*\]", "", hexdump_display)
+    longest = max((len(line) for line in plain.splitlines()), default=80)
+    return min(longest + 6, 200)
+
+
+def render_raw_hexdump_panel(analysis: FileAnalysis, console: Console, *, no_wrap: bool = True) -> None:
     raw_bytes = Path(analysis.path).read_bytes()
-    hexdump_display, trunc = pretty_hexdump(raw_bytes, head=analysis.hexdump_head, colorize=not console.no_color)
+    hexdump_display, trunc = pretty_hexdump(
+        raw_bytes,
+        head=analysis.hexdump_head,
+        colorize=not console.no_color,
+        annotations=analysis.jwt_byte_ranges,
+    )
     title = "[bold white]Raw Hex & ASCII Dump[/bold white]"
     subtitle_parts = [f"[dim]{analysis.size_bytes:,} total bytes[/dim]", f"[dim]SHA-256:[/dim] [cyan]{analysis.sha256[:16]}…[/cyan]"]
     if trunc and analysis.hexdump_head is not None:
         subtitle_parts.append(f"[yellow]showing first {analysis.hexdump_head:,} bytes[/yellow]")
-    console.print(Panel(hexdump_display, title=title, subtitle="  ·  ".join(subtitle_parts), border_style="bright_blue", padding=(1, 2)))
+    if analysis.jwt_byte_ranges:
+        seen: set[str] = set()
+        legend_parts = []
+        for ann in analysis.jwt_byte_ranges:
+            if ann.label not in seen:
+                seen.add(ann.label)
+                legend_parts.append(f"[{ann.style}]{ann.label}[/]")
+        subtitle_parts.append("[dim]Legend:[/dim] " + "  ".join(legend_parts))
+    panel_kwargs: dict[str, Any] = {
+        "title": title,
+        "subtitle": "  ·  ".join(subtitle_parts),
+        "border_style": "bright_blue",
+        "padding": (1, 2),
+    }
+    if no_wrap:
+        panel_kwargs["expand"] = False
+        panel_kwargs["width"] = _hexdump_panel_width(hexdump_display)
+    console.print(Panel(hexdump_display, **panel_kwargs), overflow="ignore", crop=False)
 
 
 def decode_xr2(value: str) -> Xr2Analysis:
-    analysis = Xr2Analysis(present=True, raw_value=value)
+    analysis = Xr2Analysis(present=True, raw_value=value, purpose=XR2_PURPOSE_DETAIL)
     decoded: bytes | None = None
     method: str | None = None
 
@@ -512,6 +626,10 @@ def analyze_vcf_data_file(
 
         verify_jwt_signature(analysis, public_key_pem=public_key_pem)
 
+        analysis.jwt_byte_ranges = compute_jwt_byte_ranges(
+            data, analysis.raw_text_preview, analysis.jwt_payload
+        )
+
     # Determine if we should be aggressive (decode failure triggers expanded search)
     aggressive_mode = bool(analysis.jwt_errors) or not analysis.is_jwt
 
@@ -621,26 +739,31 @@ def render_analysis(analysis: FileAnalysis, console: Console, *, verbose: bool =
         console.print(Panel(f"[yellow]{analysis.jwt_verify_error}[/yellow]", title="[bold yellow]Signature Verification[/bold yellow]", border_style="yellow", padding=(0, 2)))
 
     _section(console, 5, "xr2 Fingerprint Analysis", "bold magenta")
-    xr2_lines: list[str] = [f"[italic dim]{XR2_EXPLANATION}[/italic dim]", ""]
+    xr2_table = Table(box=box.ROUNDED, show_header=False, padding=(0, 1))
+    xr2_table.add_column("Field", style="bold magenta", min_width=16)
+    xr2_table.add_column("Value", style="white")
+    xr2_table.add_row("Purpose", XR2_EXPLANATION)
+    xr2_table.add_row("Research note", XR2_PURPOSE_DETAIL)
+    xr2_table.add_row("Reference", f"[link={XR2_REFERENCE_URL}]Broadcom VCF 9 licensing overview[/link]")
+    if analysis.xr2.present and analysis.xr2.raw_value:
+        xr2_table.add_row("Raw claim value", f"[bold magenta]{analysis.xr2.raw_value}[/bold magenta]")
     if analysis.xr2.present:
         if analysis.xr2.error:
-            xr2_lines.append(f"[yellow]Decode error:[/yellow] {analysis.xr2.error}")
+            xr2_table.add_row("Decode status", f"[yellow]Failed[/yellow]: {analysis.xr2.error}")
         else:
-            xr2_lines.append(f"[dim]Decode method:[/dim] [cyan]{analysis.xr2.decode_method}[/cyan]")
+            xr2_table.add_row("Decode status", f"[green]OK[/green] via [cyan]{analysis.xr2.decode_method}[/cyan]")
             if analysis.xr2.decoded_json is not None:
-                xr2_lines.append("[dim]Decoded as JSON:[/dim]")
-                xr2_lines.append(json.dumps(analysis.xr2.decoded_json, indent=2))
+                xr2_table.add_row("Decoded JSON", json.dumps(analysis.xr2.decoded_json, indent=2))
             elif analysis.xr2.decoded_bytes is not None:
                 length = len(analysis.xr2.decoded_bytes)
-                xr2_lines.append(f"[dim]Decoded length:[/dim] [white]{length}[/white] bytes [dim](opaque binary)[/dim]")
-                sub_hex, _ = pretty_hexdump(analysis.xr2.decoded_bytes[:256], head=256, colorize=not console.no_color)
-                xr2_lines.append("")
-                xr2_lines.append(sub_hex)
-                if length > 256:
-                    xr2_lines.append(f"[dim]… {length - 256} more bytes not shown[/dim]")
+                xr2_table.add_row("Decoded bytes", f"{length} bytes (opaque binary fingerprint)")
     else:
-        xr2_lines.append("[dim]xr2 claim not present in payload.[/dim]")
-    console.print(Panel("\n".join(xr2_lines), border_style="magenta", padding=(0, 2)))
+        xr2_table.add_row("Status", "[dim]xr2 claim not present in payload.[/dim]")
+    console.print(xr2_table)
+
+    if analysis.xr2.present and analysis.xr2.decoded_bytes is not None and analysis.xr2.decoded_json is None:
+        sub_hex, _ = pretty_hexdump(analysis.xr2.decoded_bytes[:256], head=256, colorize=not console.no_color)
+        console.print(Panel(sub_hex, title="[dim]xr2 decoded bytes (hex)[/dim]", border_style="magenta", padding=(0, 1), expand=False), overflow="ignore")
 
     _section(console, 6, "Sensitive Data Scan", "bold yellow")
     if analysis.sensitive_findings:
