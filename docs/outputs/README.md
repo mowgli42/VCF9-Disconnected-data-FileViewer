@@ -1,6 +1,8 @@
 # Captured inspector outputs
 
-Pre-generated **colored** terminal reports from the synthetic `samples/*.data` files (v1.2.0).
+Pre-generated **colored** terminal reports from the synthetic `samples/*.data` files (v1.2.1).
+
+Captures include JWT-aware hex highlighting (header/payload/signature/xr2 legend), fixed-width hex panels, and the expanded xr2 purpose table in section 5.
 
 | Sample | Verdict | Full output (color) | Preview | Terminal replay |
 |--------|---------|---------------------|---------|-----------------|

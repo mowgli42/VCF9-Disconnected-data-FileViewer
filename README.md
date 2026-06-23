@@ -34,7 +34,9 @@ python vcf_compliance_inspector.py file.data --public-key broadcom_public.pem
 | **SHA-256 audit hash** | Per-file digest for change tracking and SIEM logs |
 | **JWT decode** | Manual base64url + JSON decode of header and payload |
 | **Robust extraction** | Regex-based detection that tolerates whitespace/newlines |
-| **`xr2` analysis** | Decodes the opaque fingerprint; explains Broadcom’s non-identifying design |
+| **`xr2` analysis** | Research-backed purpose table: raw claim, decode status, Broadcom reference, decoded content |
+| **JWT-aware hexdump** | Section 9 color-codes parsed JWT header/payload/signature (and xr2 claim text) vs unparsed bytes |
+| **Screenshot-friendly hex** | Hex lines use fixed panel width and `overflow=ignore` so columns stay aligned in narrow terminals |
 | **Sensitive-data scan** | Keywords + regex (email, IP, internal hostnames, PEM headers, high-entropy base64) |
 | **Optional signature verification** | `--public-key` flag + documented `verify_jwt_signature()` extension point (PyJWT if available) |
 | **Assurance boundary** | Explicit panel on what the tool cannot guarantee (links to risk assessment) |
