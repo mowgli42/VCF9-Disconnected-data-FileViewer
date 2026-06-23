@@ -11,7 +11,11 @@ For residual risks, assurance boundaries, and what a “clean” verdict does **
 ## Quick start
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
+pytest
 
 # Try the included sample files
 python vcf_compliance_inspector.py samples/ --dir
