@@ -51,11 +51,17 @@ def build_excerpt(full: str, slug: str) -> str:
 
     header_start = _line_index(lines, "VCF Compliance Inspector")
     jwt_start = _line_index(lines, "2. JWT Structure")
+    xr2_start = _line_index(lines, "5. xr2 Fingerprint Analysis")
     verdict_start = _line_index(lines, "8. Summary & Verdict")
     hex_start = _line_index(lines, "9. Raw Hex & ASCII")
 
     if header_start is not None and jwt_start is not None:
         chunks.append("\n".join(lines[header_start : jwt_start + 4]))
+
+    if xr2_start is not None and slug in {"registration-clean", "registration-review"}:
+        xr2_end = _line_index(lines, "6. Sensitive Data Scan", start=xr2_start)
+        if xr2_end is not None:
+            chunks.append("\n".join(lines[xr2_start:xr2_end]))
 
     if slug == "registration-review":
         scan_start = _line_index(lines, "6. Sensitive Data Scan")
@@ -74,7 +80,7 @@ def build_excerpt(full: str, slug: str) -> str:
         chunks.append("\n".join(lines[verdict_start : min(verdict_start + 12, hex_line)]))
 
     if hex_start is not None:
-        chunks.append("\n".join(lines[hex_start : hex_start + 14]))
+        chunks.append("\n".join(lines[hex_start : hex_start + 16]))
 
     return "\n\n".join(chunks)
 
@@ -87,7 +93,7 @@ def capture_ansi(slug: str, sample_rel: str) -> tuple[str, str]:
     console = Console(
         file=buffer,
         record=True,
-        width=110,
+        width=120,
         force_terminal=True,
         color_system="truecolor",
         legacy_windows=False,
