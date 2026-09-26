@@ -3,3 +3,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+
+# Secrets (never commit private keys)
+*-key.pem
+*.key

@@ -30,3 +30,6 @@ The tool now provides stronger defense-in-depth by treating every file as potent
 - Future: Stronger steganalysis, optional real signature verification, TUI mode
 
 Keep this document updated after every significant change.
+## Secrets
+
+Do not commit private keys, *-key.pem, *.key, .env secrets, or BEGIN … PRIVATE KEY. Generate locally; gitignore keys.
